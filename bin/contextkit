@@ -735,7 +735,32 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 ROOT="$(cd "$ROOT" && pwd -P)"
 cd "$ROOT"
 
-contextkit build --target codex >/dev/null
+target="codex"
+case "${1:-}" in
+  "")
+    ;;
+  codex|claude|all)
+    target="$1"
+    ;;
+  --target)
+    target="${2:-}"
+    ;;
+  *)
+    printf 'Unknown target argument: %s\\n' "$1" >&2
+    exit 2
+    ;;
+esac
+
+case "$target" in
+  codex|claude|all)
+    ;;
+  *)
+    printf 'Target must be codex, claude, or all; got: %s\\n' "$target" >&2
+    exit 2
+    ;;
+esac
+
+contextkit build --target "$target" >/dev/null
 """
 
 
