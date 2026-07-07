@@ -7,7 +7,8 @@ make an agent operable from a repository.
 
 ContextKit is deliberately higher-rank than a normal capability. Capabilities
 remain separate tools; ContextKit discovers and indexes them as one layer of the
-agent body.
+agent body. Capability creation, validation, audit, and release doctrine live in
+the capabilities manager/repo, not in ContextKit.
 
 ## What It Manages
 
@@ -47,6 +48,7 @@ contextkit audit
 contextkit audit --write
 contextkit guide bootstrap
 contextkit guide authoring
+contextkit guide validation
 ```
 
 Use `contextkit init` for a new agent project. Use `contextkit migrate --plan`

@@ -302,13 +302,33 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
 
 
 def _runtime_doctrine() -> str:
-    return """# ContextKit Runtime Doctrine
+    return """# ContextKit Operating Doctrine
 
-- One durable fact has one live home.
+## Bootstrap and validation
+
+- New project sequence: `git init`, `contextkit init`, `contextkit install-hooks --target codex --target claude`, `contextkit doctor`, `contextkit build --target all`, `contextkit audit`.
+- Existing project sequence: `contextkit migrate --plan`, `contextkit adopt`, move legacy dot body folders to visible folders, install hooks, then run doctor/build/audit.
+- After changing the agent body, run `contextkit doctor`, `contextkit build --target all`, and `contextkit audit` before committing.
+- Generated context files are build artifacts. Do not edit `.codex/generated/context.md` or `.claude/rules/CONTEXT.md` by hand.
+
+## Authoring rules
+
+- One durable fact has one live home. When facts conflict, update the owning file instead of duplicating a second truth.
 - Live source of truth beats documentation when they disagree.
-- Context files are current doctrine; historical assets are evidence, not live doctrine.
-- Keep always-on context lean; move on-demand detail into stubs, assets, routines, or capability references.
-- Do not store loose work in progress in the repo; durable work belongs in the project's chosen work system or in a deliberate asset/audit artifact.
+- `context/` is current doctrine. Every context Markdown file needs front matter: `title`, specific one-line `description`, `load: inline|stub`, and numeric `order`.
+- Use `load: inline` only for always-needed constraints. Use `load: stub` for discoverable context that should be loaded on demand.
+- Do not use Markdown links between context files as routing. Routing belongs in descriptions, generated indexes, and explicit loading.
+- `assets/` is historical evidence and supporting material, not live doctrine. Promote durable facts into the live owning layer; do not rewrite old assets just to make them current.
+- `routines/` holds repeatable procedures. A routine describes ordered work and when to run it; it should not duplicate tool contracts, identifiers, or durable source-system doctrine.
+- `capabilities/` is an external tool layer that ContextKit indexes when present. Capability creation, validation, audit, and internal doctrine belong to the capabilities manager/repo, not to ContextKit.
+- Do not store loose work in progress in the repo. Durable work belongs in the project's chosen work system or in a deliberate asset/audit artifact.
+
+## Audit and repair
+
+- Use `contextkit audit` for the whole live context and `contextkit audit-file <path>` for one file.
+- Fix missing metadata, weak descriptions, duplicate durable facts, internal context links, inline bloat, and content that lives at the wrong layer.
+- Persist formal reports with `contextkit audit --write` under `assets/audits/`.
+- After remediation, rebuild and audit again until the project body is coherent.
 """
 
 
@@ -318,7 +338,7 @@ Context manager: `{CONFIG_REL.as_posix()}`
 Rebuild: `contextkit build --target {target}`
 Doctor: `contextkit doctor`
 Help: `contextkit help`
-Authoring help: `contextkit guide authoring`
+Guides: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide routines`; `contextkit guide audit`
 """
 
 
@@ -1563,12 +1583,37 @@ capabilities. Do not edit generated files by hand.
 """,
     "authoring": """# ContextKit Authoring Guide
 
+## Creating or editing context files
+
+Put current project doctrine in `context/`. Every Markdown file must start with:
+
+```yaml
+---
+title: Human title
+description: Specific one-line routing description.
+load: inline|stub
+order: 100
+---
+```
+
+Use `load: inline` only when the body is needed in nearly every run. Use
+`load: stub` when the model only needs the title, path, and description until a
+task calls for that doctrine.
+
+## Ownership rules
+
 - One durable fact has one live home.
-- Put current project doctrine in `context/`.
-- Use `load: inline` only for always-needed rules.
-- Use `load: stub` for context that should be discoverable but loaded on demand.
-- Make `description` specific; it is the routing surface.
-- Do not rewrite historical assets just because they became stale.
+- When adding a fact, identify the owning layer and file before writing.
+- If a fact already exists elsewhere, update or move it instead of duplicating.
+- Make `description` specific enough that the model can decide when to load it.
+- Avoid Markdown links between context files as routing; generated metadata owns routing.
+- Keep live state, worklists, pending balances, and open task scratch out of context.
+
+## After authoring
+
+Run `contextkit build --target all` and `contextkit audit`. If the audit points
+to bloat, duplicate facts, weak descriptions, or wrong placement, fix the source
+file and rebuild.
 """,
     "assets": """# Assets Guide
 
@@ -1580,15 +1625,83 @@ live layer that owns them.
 """,
     "routines": """# Routines Guide
 
-Routines are repeatable procedures under `routines/`. They should describe the
-ordered work, not restate tool models, identifiers, or source-system doctrine.
-Install the `routine` capability to validate and render the routine index.
+Routines are repeatable procedures under `routines/`. A routine should tell the
+agent when to run the procedure and the ordered work to perform.
+
+Each routine Markdown file should start with:
+
+```yaml
+---
+name: routine-name
+description: Specific one-line trigger and outcome.
+---
+```
+
+Authoring rules:
+
+- Put procedural sequencing in routines.
+- Keep durable doctrine in `context/`, not duplicated in routines.
+- Keep tool contracts and identifier maps in the owning capability layer, not routines.
+- Make the `description` a routing surface: when should this routine be loaded?
+- Prefer one routine per repeatable job; split only when the trigger/outcome differs.
+
+After editing routines, run `contextkit build --target all` so the generated
+routine index is refreshed.
 """,
     "audit": """# Audit Guide
 
+Use audits to bring the project body back into shape.
+
+Commands:
+
+```sh
+contextkit audit
+contextkit audit-file context/path/to/file.md
+contextkit audit --write
+```
+
 `contextkit audit` is advisory by default. `contextkit audit --write` persists a
-report under `assets/audits/`. v0 checks metadata, weak descriptions, duplicate
-exact claims, internal context links, likely taxonomy mismatch, and inline bloat.
+report under `assets/audits/`.
+
+Fix these classes first:
+
+- missing or invalid front matter;
+- weak routing descriptions;
+- duplicate durable facts;
+- internal context links used as routing;
+- inline files that should be stubs;
+- material living in the wrong layer;
+- historical assets treated as live doctrine.
+
+After remediation, run `contextkit build --target all` and `contextkit audit`
+again. The goal is a coherent body, not a quiet report at any cost.
+""",
+    "validation": """# Validation Guide
+
+Run validation after init, migration, hook changes, or any meaningful body edit:
+
+```sh
+contextkit doctor
+contextkit build --target all
+contextkit audit
+```
+
+`doctor` checks project binding, required files, gitignore guards, visible body
+layers, legacy dot folders, and host binding locations.
+
+`doctor` confirms the project can expose `capabilities/` as a layer, but it does
+not validate capability implementation, creation doctrine, or capability tests.
+Use the capabilities manager and capabilities repo for that.
+
+`build --target all` proves Codex and Claude generated contexts can be compiled
+from source. Generated files are ignored build artifacts and should not be edited
+by hand.
+
+`audit` checks the live context layer for metadata quality, duplicate durable
+facts, stale routing assumptions, wrong placement, and inline bloat.
+
+Before committing, also confirm that `.env.local`, `.env`, `.codex/generated/`,
+and `.claude/rules/CONTEXT.md` are not staged.
 """,
     "migration": """# Migration Guide
 
@@ -1608,6 +1721,10 @@ Capabilities remain separate tools. ContextKit includes their project index from
 `capabilities/settings.json`, installed capability snapshots, and each enabled
 capability's visible project envelope under `capabilities/<name>/`.
 Capability-owned references and operational state stay inside `capabilities/`.
+
+ContextKit does not define how to create, validate, audit, or release a
+capability. Use the capabilities manager/repo for capability doctrine. ContextKit
+only surfaces the enabled capability set into generated project context.
 """,
 }
 
@@ -1641,7 +1758,7 @@ Commands:
   contextkit audit-file <path> [--json]
   contextkit groom --plan|--apply
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|assets|routines|audit|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|validation|assets|routines|audit|migration|hooks|capabilities]
   contextkit templates
 """
 
