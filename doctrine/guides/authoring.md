@@ -128,6 +128,39 @@ If an inline file grows past the point where most sessions need every paragraph,
 split it: keep the law inline and move examples, tables, and rare detail into a
 stub file.
 
+## Addressing
+
+Text serves the current reader and the current action.
+
+- Runtime context: facts, commands, routing, prohibitions.
+- On-demand guides: rules, contracts, templates, quality bars.
+- README and repository docs: orientation for a new human reader.
+- Assets: evidence, history, plans, research.
+
+State the final form. Do not include internal arguments, comparison as identity,
+or traces of how the decision was reached.
+
+Bad:
+
+```md
+ContextKit is deliberately higher-rank than a normal capability.
+```
+
+Good:
+
+```md
+ContextKit manages the project body and generated runtime context.
+Capabilities are separate tool packages. ContextKit reads project capability
+envelopes and includes enabled tool awareness in generated context.
+```
+
+Placement test:
+
+- "What is this and what do I do next?" - keep.
+- "Why did we choose this over another design?" - asset, plan, or commit history.
+- "How did this used to work?" - asset, migration note, or git.
+- "What does the neighboring system do?" - owning system doc or capability guide.
+
 ## Naming
 
 Name files for the stable domain they own, not for the task that created them.
@@ -161,8 +194,10 @@ A good context body:
 
 - states durable facts affirmatively;
 - keeps one fact in one home;
+- addresses the reader at the correct level;
 - names other homes by role only when routing is necessary;
 - avoids change history, migration notes, and "formerly";
+- avoids internal arguments and comparison as identity;
 - avoids long copied command contracts or generated output;
 - promotes conclusions from assets without rewriting the evidence;
 - separates law from procedure.
@@ -263,6 +298,7 @@ A new or edited file is good when:
 
 - a future agent can tell from generated context when to load it;
 - the file owns a clear domain and does not leak into neighboring domains;
+- the file answers the reader's next action at the correct level;
 - every durable fact has one home;
 - always-on text is small enough to justify its per-session cost;
 - asset, routine, and capability details were judged by their owning guides;
