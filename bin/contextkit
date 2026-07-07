@@ -1,0 +1,1088 @@
+#!/usr/bin/env python3
+"""contextkit — manager for repo-backed agent project memory."""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import json
+import os
+import re
+import shutil
+import stat
+import subprocess
+import sys
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
+    tomllib = None
+
+
+VERSION = 1
+CONFIG_REL = Path(".contextkit") / "config.toml"
+README_REL = Path(".contextkit") / "README.md"
+DEFAULT_SOURCES = {
+    "context": ".context",
+    "assets": ".assets",
+    "routines": ".routines",
+    "capabilities": ".capabilities",
+}
+DEFAULT_TARGETS = {
+    "codex": Path(".codex") / "generated" / "context.md",
+    "claude": Path(".claude") / "rules" / "CONTEXT.md",
+}
+CODEX_CAPABILITIES_FRAGMENT = Path(".codex") / "generated" / "capabilities.md"
+CODEX_BUILD_ENV = "CAPABILITIES_CODEX_BUILDING"
+
+
+class ContextKitError(Exception):
+    def __init__(self, message: str, exit_code: int = 1) -> None:
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+@dataclass(frozen=True)
+class ContextFile:
+    path: Path
+    rel: Path
+    title: str
+    description: str
+    load: str
+    order: int
+    body: str
+    raw_frontmatter: dict[str, str]
+
+
+@dataclass
+class Finding:
+    severity: str
+    code: str
+    path: str
+    message: str
+    hint: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        out = {
+            "severity": self.severity,
+            "code": self.code,
+            "path": self.path,
+            "message": self.message,
+        }
+        if self.hint:
+            out["hint"] = self.hint
+        return out
+
+
+def _die(message: str, exit_code: int = 1) -> None:
+    raise ContextKitError(message, exit_code)
+
+
+def _emit(value: Any, as_json: bool = False) -> None:
+    if as_json:
+        sys.stdout.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+    elif isinstance(value, str):
+        sys.stdout.write(value if value.endswith("\n") else value + "\n")
+    else:
+        sys.stdout.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
+         timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    merged_env = dict(os.environ)
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        args,
+        cwd=str(root),
+        env=merged_env,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
+
+
+def _git_root(start: Path) -> Path | None:
+    try:
+        proc = _run(["git", "rev-parse", "--show-toplevel"], start)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if proc.returncode != 0:
+        return None
+    return Path(proc.stdout.strip()).resolve()
+
+
+def _find_project_root(start: Path | None = None) -> Path:
+    here = (start or Path.cwd()).resolve()
+    home = Path.home().resolve()
+    for directory in (here, *here.parents):
+        if (directory / CONFIG_REL).exists():
+            return directory
+        if (directory / ".context").is_dir():
+            return directory
+        if (directory / ".git").is_dir():
+            return directory
+        if directory == home:
+            break
+    return _git_root(here) or here
+
+
+def _load_toml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    if tomllib is None:
+        _die("Python 3.11+ is required to read .contextkit/config.toml", 6)
+    try:
+        return tomllib.loads(path.read_text())
+    except Exception as exc:  # noqa: BLE001 - config error should be concise
+        _die(f"invalid config TOML at {path}: {exc}", 6)
+
+
+def _config(root: Path) -> dict[str, Any]:
+    raw = _load_toml(root / CONFIG_REL)
+    sources = dict(DEFAULT_SOURCES)
+    sources.update((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
+
+    targets: dict[str, Path] = dict(DEFAULT_TARGETS)
+    raw_targets = raw.get("targets") if isinstance(raw.get("targets"), dict) else {}
+    for name, entry in raw_targets.items():
+        if isinstance(entry, dict) and isinstance(entry.get("output"), str):
+            targets[name] = Path(entry["output"])
+
+    return {
+        "version": raw.get("version", VERSION),
+        "kind": raw.get("kind", "agent-project"),
+        "sources": sources,
+        "targets": targets,
+        "raw": raw,
+    }
+
+
+def _rel(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end == -1:
+        return {}, text
+    fm_text = text[4:end]
+    body_start = end + len("\n---")
+    if body_start < len(text) and text[body_start] == "\n":
+        body_start += 1
+    fm: dict[str, str] = {}
+    for raw_line in fm_text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ("'", '"'):
+            value = value[1:-1]
+        fm[key] = value
+    return fm, text[body_start:]
+
+
+def _read_context_file(root: Path, path: Path) -> tuple[ContextFile | None, list[str]]:
+    rel = Path(_rel(root, path))
+    try:
+        text = path.read_text()
+    except OSError as exc:
+        return None, [f"cannot read {rel}: {exc}"]
+    fm, body = _parse_frontmatter(text)
+    errors: list[str] = []
+    title = fm.get("title", "").strip()
+    description = fm.get("description", "").strip()
+    load = fm.get("load", "").strip()
+    order_raw = fm.get("order", "").strip()
+    if not title:
+        errors.append(f"Missing frontmatter title: {rel}")
+    if not description:
+        errors.append(f"Missing frontmatter description: {rel}")
+    if load not in {"inline", "stub"}:
+        if not load:
+            errors.append(f"Missing frontmatter load: {rel}")
+        else:
+            errors.append(f"Invalid frontmatter load in {rel}: {load}")
+    try:
+        order = int(order_raw)
+    except ValueError:
+        order = 0
+        errors.append(f"Invalid frontmatter order in {rel}: {order_raw or '<missing>'}")
+    if errors:
+        return None, errors
+    return ContextFile(path, rel, title, description, load, order, body, fm), []
+
+
+def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], list[str]]:
+    base = root / context_dir
+    if not base.is_dir():
+        _die(
+            f"context source directory not found: {context_dir}\n"
+            "Run `contextkit init` to create a project skeleton.",
+            6,
+        )
+    files: list[ContextFile] = []
+    errors: list[str] = []
+    for path in sorted(base.rglob("*.md")):
+        ctx, ctx_errors = _read_context_file(root, path)
+        if ctx:
+            files.append(ctx)
+        errors.extend(ctx_errors)
+    if errors:
+        _die("\n".join(errors), 6)
+    files.sort(key=lambda item: (item.order, item.rel.as_posix()))
+    return files, errors
+
+
+def _runtime_doctrine() -> str:
+    return """# ContextKit Runtime Doctrine
+
+- One durable fact has one live home.
+- Live source of truth beats documentation when they disagree.
+- Context files are current doctrine; historical assets are evidence, not live doctrine.
+- Keep always-on context lean; move on-demand detail into stubs, assets, routines, or capability references.
+- Do not store loose work in progress in the repo; durable work belongs in the project's chosen work system or in a deliberate asset/audit artifact.
+"""
+
+
+def _generated_block(target: str) -> str:
+    return f"""<!-- Generated by ContextKit. Do not edit by hand. -->
+Context manager: `{CONFIG_REL.as_posix()}`
+Rebuild: `contextkit build --target {target}`
+Doctor: `contextkit doctor`
+Authoring help: `contextkit guide authoring`
+"""
+
+
+def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
+    if not (root / routines_dir).is_dir():
+        warnings.append("routine layer not present; add `.routines/` or run `contextkit guide routines`")
+        return ""
+    routine = shutil.which("routine")
+    if not routine:
+        warnings.append("routine CLI not found; routine index omitted")
+        return ""
+    try:
+        proc = _run([routine, "index"], root)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        warnings.append(f"routine index failed: {exc}")
+        return ""
+    if proc.returncode != 0:
+        warnings.append(f"routine index failed; routine index omitted: {(proc.stderr or proc.stdout).strip()}")
+        return ""
+    return proc.stdout.strip() + "\n"
+
+
+def _capability_index(root: Path, capabilities_dir: Path, warnings: list[str]) -> str:
+    if not (root / capabilities_dir).is_dir():
+        warnings.append("capability layer not present; add `.capabilities/` or run `contextkit guide capabilities`")
+        return ""
+    manager = shutil.which("capabilities")
+    if not manager:
+        warnings.append("capabilities CLI not found; capability index omitted")
+        return ""
+    fragment = root / CODEX_CAPABILITIES_FRAGMENT
+    try:
+        fragment.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        proc = _run([manager, "context", "--codex"], root, env={CODEX_BUILD_ENV: "1"})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        warnings.append(f"capabilities context --codex failed: {exc}")
+        return ""
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip()
+        warnings.append(f"capabilities context --codex failed; capability index omitted: {detail}")
+        return ""
+    if not fragment.exists():
+        warnings.append("capabilities context --codex produced no fragment; capability index omitted")
+        return ""
+    try:
+        text = fragment.read_text()
+    except OSError as exc:
+        warnings.append(f"cannot read capability fragment: {exc}")
+        return ""
+    try:
+        fragment.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return text.strip() + "\n"
+
+
+def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
+    cfg = _config(root)
+    sources = cfg["sources"]
+    context_dir = Path(sources["context"])
+    routines_dir = Path(sources["routines"])
+    capabilities_dir = Path(sources["capabilities"])
+    files, _ = _collect_context(root, context_dir)
+    warnings: list[str] = []
+    inline = [item for item in files if item.load == "inline"]
+    stubs = [item for item in files if item.load == "stub"]
+    routine_index = _routine_index(root, routines_dir, warnings)
+    capability_index = _capability_index(root, capabilities_dir, warnings)
+
+    title = "Codex" if target == "codex" else "Claude"
+    out: list[str] = [f"# {title} Context", "", _generated_block(target), ""]
+    out += [
+        "Compiled source directories:",
+        "",
+        f"- `{context_dir.as_posix()}`",
+        "",
+        "Context load modes:",
+        "",
+        f"- Inline files: {len(inline)}",
+        f"- Stub files: {len(stubs)}",
+        "",
+    ]
+    if warnings:
+        out += ["Generation warnings:", ""]
+        out += [f"- {warning}" for warning in warnings]
+        out.append("")
+
+    out += ["---", "", _runtime_doctrine().strip(), "", "---", "", "# Inline Context", ""]
+    if inline:
+        for item in inline:
+            out += ["---", "", f"## Source: `{item.rel.as_posix()}`", "", item.body.strip(), ""]
+    else:
+        out += ["No inline context files.", ""]
+
+    out += ["---", "", "# Context Stubs", "",
+            "These context files are visible by metadata only. Load the path when the task needs that doctrine.",
+            ""]
+    if stubs:
+        for item in stubs:
+            out.append(f"- **{item.title}** (`{item.rel.as_posix()}`) - {item.description}")
+        out.append("")
+    else:
+        out += ["No stub context files.", ""]
+
+    if routine_index:
+        out += ["---", "", "<!-- Routine index - generated from .routines front matter. -->", "",
+                routine_index.strip(), ""]
+    if capability_index:
+        out += ["---", "", "<!-- Capability index - generated by `capabilities context` from the live registry. -->", "",
+                capability_index.strip(), ""]
+    return "\n".join(out).rstrip() + "\n", warnings
+
+
+def cmd_build(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    cfg = _config(root)
+    targets = ["codex", "claude"] if args.target == "all" else [args.target]
+    written: dict[str, str] = {}
+    warnings_by_target: dict[str, list[str]] = {}
+    for target in targets:
+        text, warnings = _compose_context(root, target)
+        output = root / cfg["targets"][target]
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile("w", delete=False, dir=str(output.parent)) as tmp:
+            tmp.write(text)
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(output)
+        output.chmod(0o644)
+        written[target] = str(output)
+        warnings_by_target[target] = warnings
+    _emit({"project": str(root), "written": written, "warnings": warnings_by_target}, args.json)
+
+
+def _write_if_missing(path: Path, body: str, created: list[str], skipped: list[str]) -> None:
+    if path.exists():
+        skipped.append(str(path))
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(body)
+    created.append(str(path))
+
+
+def _context_file(title: str, description: str, load: str, order: int, body: str) -> str:
+    return (
+        "---\n"
+        f"title: {title}\n"
+        f"description: {description}\n"
+        f"load: {load}\n"
+        f"order: {order}\n"
+        "---\n\n"
+        f"# {title}\n\n"
+        f"{body.rstrip()}\n"
+    )
+
+
+SKELETON_FILES = {
+    ".context/identity/MISSION.md": _context_file(
+        "Mission", "The agent's mission, operating scope, and north star.", "inline", 10,
+        "State what this agent exists to do, what good work looks like, and what is out of scope.",
+    ),
+    ".context/identity/AGENT.md": _context_file(
+        "Agent", "The agent identity, voice, operating posture, and boundaries.", "inline", 20,
+        "Describe who the agent is inside this project and how it should appear while operating.",
+    ),
+    ".context/identity/OWNER.md": _context_file(
+        "Owner", "The owner or supervisor relationship and command authority.", "inline", 30,
+        "Name the owner role, supervision model, and when the agent should ask for direction.",
+    ),
+    ".context/identity/PEOPLE.md": _context_file(
+        "People", "Project people, roles, authority, and durable communication facts.", "stub", 40,
+        "Record durable people facts only when they matter to future agent work.",
+    ),
+    ".context/guidelines/CONSTITUTION.md": _context_file(
+        "Constitution", "Always-on project doctrine and behavior rules for the agent.", "inline", 100,
+        "Define the agent's project-specific principles, validation rules, escalation path, and tradeoffs.",
+    ),
+    ".context/guidelines/LIMITATIONS.md": _context_file(
+        "Limitations", "Hard limits for the agent and for context authoring in this project.", "inline", 110,
+        "List non-negotiable constraints. Keep each limitation owned here and avoid duplicating it elsewhere.",
+    ),
+    ".context/guidelines/ASSETS.md": _context_file(
+        "Assets", "Map of on-demand asset folders and what belongs in each.", "stub", 120,
+        "Explain `.assets/` as supporting memory: audits, sessions, plans, research, and other historical material.",
+    ),
+    ".context/architecture/RUNTIME.md": _context_file(
+        "Runtime", "Runtime bodies, host surfaces, generated context, and execution boundaries.", "stub", 200,
+        "Describe how this agent runs, where generated context lands, and which host surfaces consume it.",
+    ),
+    ".context/architecture/SERVICES.md": _context_file(
+        "Services", "External services, ownership boundaries, and source-of-truth routing.", "stub", 210,
+        "Map external systems at the boundary level. Detailed tool operation belongs in capabilities.",
+    ),
+}
+
+
+def _config_body() -> str:
+    return """version = 1
+kind = "agent-project"
+
+[sources]
+context = ".context"
+assets = ".assets"
+routines = ".routines"
+capabilities = ".capabilities"
+
+[targets.codex]
+output = ".codex/generated/context.md"
+
+[targets.claude]
+output = ".claude/rules/CONTEXT.md"
+"""
+
+
+def _binding_readme() -> str:
+    return """# ContextKit Binding
+
+This repository is managed by ContextKit, a local manager for agent project memory.
+
+Project facts stay in this repository. ContextKit owns the shape, compiler, templates,
+guides, and audit tooling that turn those facts into host runtime context.
+
+Common commands:
+
+- `contextkit build --target codex`
+- `contextkit build --target claude`
+- `contextkit build --target all`
+- `contextkit doctor`
+- `contextkit audit`
+- `contextkit guide authoring`
+
+Add durable project memory under `.context/`. Put historical or supporting material
+under `.assets/`. Put repeatable procedures under `.routines/`. Put installed tool
+envelopes under `.capabilities/`.
+"""
+
+
+def cmd_init(args: argparse.Namespace) -> None:
+    root = _find_project_root() if args.adopt else Path.cwd().resolve()
+    created: list[str] = []
+    skipped: list[str] = []
+    _write_if_missing(root / CONFIG_REL, _config_body(), created, skipped)
+    _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
+    for rel in [".assets/audits", ".assets/sessions", ".assets/plans", ".assets/research",
+                ".routines", ".capabilities"]:
+        path = root / rel
+        if path.exists():
+            skipped.append(str(path))
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            created.append(str(path))
+    if not args.binding_only:
+        for rel, body in SKELETON_FILES.items():
+            _write_if_missing(root / rel, body, created, skipped)
+    _emit({"project": str(root), "created": created, "skipped": skipped}, args.json)
+
+
+def _codex_adapter() -> str:
+    return """#!/usr/bin/env bash
+set -euo pipefail
+
+# Generated by `contextkit install-hooks --target codex`; do not edit by hand.
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+ROOT="$(cd "$ROOT" && pwd -P)"
+cd "$ROOT"
+
+contextkit build --target codex >/dev/null
+"""
+
+
+def _read_json(path: Path) -> Any:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+
+
+def _wire_codex(root: Path) -> dict[str, Any]:
+    build = root / ".codex" / "hooks" / "build-context.sh"
+    build.parent.mkdir(parents=True, exist_ok=True)
+    existing = build.read_text() if build.exists() else None
+    body = _codex_adapter()
+    build.write_text(body)
+    build.chmod(build.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    config = root / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    context_rel = DEFAULT_TARGETS["codex"].as_posix()
+    if config.exists():
+        text = config.read_text()
+        changed_config = False
+        if "project_doc_fallback_filenames" not in text:
+            text = text.rstrip() + f'\nproject_doc_fallback_filenames = ["{context_rel}"]\n'
+            changed_config = True
+        elif context_rel not in text:
+            text = text.rstrip() + f'\n# ContextKit output: {context_rel}\n'
+            changed_config = True
+        if "project_doc_max_bytes" not in text:
+            text = text.rstrip() + "\nproject_doc_max_bytes = 131072\n"
+            changed_config = True
+        if changed_config:
+            config.write_text(text if text.endswith("\n") else text + "\n")
+    else:
+        config.write_text(
+            f'project_doc_fallback_filenames = ["{context_rel}"]\n'
+            "project_doc_max_bytes = 131072\n"
+        )
+        changed_config = True
+
+    hooks_path = root / ".codex" / "hooks.json"
+    hooks = _read_json(hooks_path)
+    if not isinstance(hooks, dict):
+        hooks = {}
+    session = hooks.setdefault("hooks", {}).setdefault("SessionStart", [])
+    command = (
+        "/bin/bash -lc 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); "
+        "/bin/bash \"$root/.codex/hooks/build-context.sh\"'"
+    )
+    hook_added = False
+    if not any(command in (hook or {}).get("command", "")
+               for entry in session for hook in (entry or {}).get("hooks", [])):
+        session.append({
+            "matcher": "startup|resume|clear|compact",
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "timeout": 30,
+                "statusMessage": "Regenerating ContextKit context",
+            }],
+        })
+        hook_added = True
+    _write_json(hooks_path, hooks)
+    return {
+        "compiler": str(build),
+        "compiler_changed": existing != body,
+        "config": str(config),
+        "hooks": str(hooks_path),
+        "hook_added": hook_added,
+    }
+
+
+def _wire_claude(root: Path) -> dict[str, Any]:
+    settings_file = root / ".claude" / "settings.json"
+    settings = _read_json(settings_file)
+    if not isinstance(settings, dict):
+        settings = {}
+    session = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
+    command = "contextkit build --target claude >/dev/null"
+    hook_added = False
+    if not any("contextkit build --target claude" in (hook or {}).get("command", "")
+               for entry in session for hook in (entry or {}).get("hooks", [])):
+        session.append({"hooks": [{"type": "command", "command": command}]})
+        hook_added = True
+    _write_json(settings_file, settings)
+    return {"settings": str(settings_file), "hook_added": hook_added}
+
+
+def cmd_install_hooks(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    targets = args.target or ["codex"]
+    result: dict[str, Any] = {"project": str(root)}
+    if "codex" in targets:
+        result["codex"] = _wire_codex(root)
+    if "claude" in targets:
+        result["claude"] = _wire_claude(root)
+    _emit(result, args.json)
+
+
+def _git_state(root: Path) -> dict[str, Any]:
+    git_dir = root / ".git"
+    out: dict[str, Any] = {"present": git_dir.exists()}
+    if git_dir.exists():
+        proc = _run(["git", "status", "--short"], root)
+        out["dirty"] = bool(proc.stdout.strip()) if proc.returncode == 0 else None
+    return out
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    cfg = _config(root)
+    sources = cfg["sources"]
+    report = {
+        "project": str(root),
+        "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
+        "kind": cfg["kind"],
+        "git": _git_state(root),
+        "layers": {
+            name: {
+                "path": str(root / rel),
+                "present": (root / rel).exists(),
+            }
+            for name, rel in sources.items()
+        },
+        "tools": {
+            "contextkit": str(Path(sys.argv[0]).resolve()),
+            "capabilities": shutil.which("capabilities"),
+            "routine": shutil.which("routine"),
+        },
+        "targets": {name: str(root / path) for name, path in cfg["targets"].items()},
+        "hooks": {
+            "codex_hooks": str(root / ".codex" / "hooks.json"),
+            "codex_adapter": str(root / ".codex" / "hooks" / "build-context.sh"),
+            "claude_settings": str(root / ".claude" / "settings.json"),
+        },
+    }
+    if args.json:
+        _emit(report, True)
+        return
+    lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Kind: `{cfg['kind']}`", ""]
+    lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
+    lines += ["Layers:"]
+    for name, item in report["layers"].items():
+        marker = "present" if item["present"] else "missing"
+        lines.append(f"- {name}: {marker} (`{item['path']}`)")
+    lines += ["", "Tools:"]
+    for name, value in report["tools"].items():
+        lines.append(f"- {name}: `{value or 'not found'}`")
+    lines += ["", "Targets:"]
+    for name, value in report["targets"].items():
+        lines.append(f"- {name}: `{value}`")
+    _emit("\n".join(lines) + "\n")
+
+
+def _weak_description(description: str) -> bool:
+    words = re.findall(r"[A-Za-z0-9_'-]+", description)
+    if len(words) < 6:
+        return True
+    generic = {"misc", "notes", "context", "information", "details", "things", "stuff"}
+    return len(set(w.lower() for w in words) - generic) < 4
+
+
+def _content_owner_hint(rel: str, text: str) -> str | None:
+    lowered = text.lower()
+    if "/guidelines/" in rel and sum(word in lowered for word in
+                                    ["runtime", "container", "deployment", "service architecture"]) >= 2:
+        return "This reads like architecture; consider `.context/architecture/`."
+    if "/architecture/" in rel and sum(word in lowered for word in
+                                      ["always", "never", "must", "limitation", "do not"]) >= 4:
+        return "This reads like doctrine or constraints; consider `.context/guidelines/`."
+    if "/identity/" in rel and sum(word in lowered for word in
+                                  ["cli", "endpoint", "container", "database", "queue"]) >= 3:
+        return "This reads like runtime/service architecture; consider `.context/architecture/`."
+    return None
+
+
+def _normalized_claims(item: ContextFile) -> list[str]:
+    claims: list[str] = []
+    for raw in re.split(r"[\n.]", item.body):
+        line = re.sub(r"\s+", " ", raw.strip().lower())
+        line = re.sub(r"[`*_>#-]", "", line).strip()
+        if not line:
+            continue
+        if len(line.split()) < 10:
+            continue
+        if line.startswith(("the ", "a ", "an ")) or any(ch.isalpha() for ch in line):
+            claims.append(line)
+    return claims
+
+
+def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Finding]:
+    cfg = _config(root)
+    context_dir = Path(cfg["sources"]["context"])
+    findings: list[Finding] = []
+    files: list[ContextFile] = []
+    raw_paths = paths if paths is not None else sorted((root / context_dir).rglob("*.md"))
+    for path in raw_paths:
+        ctx, errors = _read_context_file(root, path)
+        if errors:
+            for err in errors:
+                findings.append(Finding("error", "metadata", _rel(root, path), err))
+            continue
+        if ctx:
+            files.append(ctx)
+
+    claim_owners: dict[str, list[str]] = {}
+    for item in files:
+        rel = item.rel.as_posix()
+        if _weak_description(item.description):
+            findings.append(Finding(
+                "warning", "weak-description", rel,
+                "Description is too generic to route reliably.",
+                "Make it a specific one-line answer to: when should the agent load this file?",
+            ))
+        if "\n" in item.description:
+            findings.append(Finding("warning", "description", rel, "Description should be one line."))
+        if item.load == "inline" and (len(item.body.split()) > 1200 or len(item.body.splitlines()) > 180):
+            findings.append(Finding(
+                "warning", "inline-bloat", rel,
+                "Inline file is large enough to deserve review.",
+                "Keep always-on context lean; move detail to a stub, routine, capability reference, or asset.",
+            ))
+        if re.search(r"\[[^\]]+\]\((?:\.\.?/)?[^)]+\.md(?:#[^)]+)?\)", item.body):
+            findings.append(Finding(
+                "warning", "internal-context-link", rel,
+                "Markdown links to sibling context files create stale routing assumptions.",
+                "Prefer self-contained wording and let compiled metadata route sibling files.",
+            ))
+        asset_live_pattern = re.compile(
+            r"(?:see|load|read|per|according to|based on|from)\s+`?\.assets/(?:sessions|plans|research)/"
+            r"|\]\(\.assets/(?:sessions|plans|research)/",
+            flags=re.I,
+        )
+        if asset_live_pattern.search(item.body):
+            findings.append(Finding(
+                "warning", "asset-as-live-doctrine", rel,
+                "File points at historical assets as if they are live doctrine.",
+                "Promote durable facts into the live owning layer; leave historical assets as evidence.",
+            ))
+        hint = _content_owner_hint(rel, item.body)
+        if hint:
+            findings.append(Finding("info", "taxonomy-fit", rel, "File may live at the wrong context altitude.", hint))
+        for claim in _normalized_claims(item):
+            claim_owners.setdefault(claim, []).append(rel)
+
+    for claim, owners in sorted(claim_owners.items()):
+        unique = sorted(set(owners))
+        if len(unique) > 1:
+            findings.append(Finding(
+                "warning", "duplicate-live-fact", ", ".join(unique),
+                f"Same durable-looking claim appears in {len(unique)} live files.",
+                claim[:220],
+            ))
+    return findings
+
+
+def _audit_report(root: Path, findings: list[Finding]) -> str:
+    today = _dt.date.today().isoformat()
+    lines = [f"# ContextKit Audit - {today}", "", f"Project: `{root}`", "", "## Findings", ""]
+    if not findings:
+        lines.append("No findings.")
+    else:
+        for finding in findings:
+            lines += [
+                f"### {finding.severity.upper()} `{finding.code}`",
+                "",
+                f"- Path: `{finding.path}`",
+                f"- Finding: {finding.message}",
+            ]
+            if finding.hint:
+                lines.append(f"- Hint: {finding.hint}")
+            lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _write_audit(root: Path, report: str) -> Path:
+    target_dir = root / ".assets" / "audits"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    today = _dt.date.today().isoformat()
+    target = target_dir / f"{today}_contextkit-audit.md"
+    if target.exists():
+        index = 2
+        while True:
+            candidate = target_dir / f"{today}_contextkit-audit-{index}.md"
+            if not candidate.exists():
+                target = candidate
+                break
+            index += 1
+    target.write_text(report)
+    return target
+
+
+def cmd_audit(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    findings = _audit_context_files(root)
+    report = _audit_report(root, findings)
+    if args.write:
+        written = _write_audit(root, report)
+        result = {"project": str(root), "written": str(written),
+                  "findings": [item.as_dict() for item in findings]}
+        _emit(result, args.json)
+    elif args.json:
+        _emit({"project": str(root), "findings": [item.as_dict() for item in findings]}, True)
+    else:
+        _emit(report)
+
+
+def cmd_audit_file(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    path = Path(args.path)
+    if not path.is_absolute():
+        path = root / path
+    findings = _audit_context_files(root, [path])
+    if args.json:
+        _emit({"project": str(root), "findings": [item.as_dict() for item in findings]}, True)
+    else:
+        _emit(_audit_report(root, findings))
+
+
+def _require_git_for_mutation(root: Path) -> None:
+    if not (root / ".git").exists():
+        _die("mutating operations require a git repository; run `git init` first", 6)
+
+
+def cmd_groom(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    if args.apply:
+        _require_git_for_mutation(root)
+        _emit(
+            "ContextKit v0 has no automatic groom patches yet.\n"
+            "Run `contextkit audit --write`, review the report, and apply changes deliberately."
+        )
+        return
+    findings = _audit_context_files(root)
+    lines = ["# ContextKit Groom Plan", "", f"Project: `{root}`", ""]
+    if not findings:
+        lines.append("No audit findings to groom.")
+    else:
+        lines += [
+            "Review findings in this order:",
+            "",
+            "1. Fix metadata errors that block compilation.",
+            "2. Remove duplicate live facts by choosing one owning file.",
+            "3. Improve weak routing descriptions.",
+            "4. Move large inline detail into stubs, routines, capabilities, or assets.",
+            "",
+            f"Current finding count: {len(findings)}",
+        ]
+    _emit("\n".join(lines) + "\n")
+
+
+def cmd_migrate(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    if args.apply:
+        _require_git_for_mutation(root)
+        _die("contextkit migrate --apply is not implemented in v0; use --plan first", 6)
+    candidates = [
+        "CLAUDE.md", "AGENTS.md", ".claude/rules", ".codex/generated/context.md",
+        ".codex/hooks/build-context.sh", ".routines", ".capabilities", ".context",
+    ]
+    lines = ["# ContextKit Migration Plan", "", f"Project: `{root}`", "", "Detected surfaces:", ""]
+    for rel in candidates:
+        path = root / rel
+        if path.exists():
+            kind = "directory" if path.is_dir() else "file"
+            lines.append(f"- `{rel}` ({kind})")
+    lines += [
+        "",
+        "Suggested path:",
+        "",
+        "1. Run `contextkit init --binding-only` to add `.contextkit/` without replacing project memory.",
+        "2. Move durable live facts into `.context/` files with front matter.",
+        "3. Preserve historical material under `.assets/`.",
+        "4. Run `contextkit build --target all` and compare generated host context.",
+        "5. Replace local host compilers with `contextkit install-hooks` after review.",
+        "",
+        "Deletion of root host instruction files is intentionally manual in v0.",
+    ]
+    _emit("\n".join(lines) + "\n")
+
+
+GUIDES = {
+    "authoring": """# ContextKit Authoring Guide
+
+- One durable fact has one live home.
+- Put current project doctrine in `.context/`.
+- Use `load: inline` only for always-needed rules.
+- Use `load: stub` for context that should be discoverable but loaded on demand.
+- Make `description` specific; it is the routing surface.
+- Do not rewrite historical assets just because they became stale.
+""",
+    "assets": """# Assets Guide
+
+`.assets/` holds supporting memory, not always-on doctrine.
+
+Use `audits/` for persisted reviews, `sessions/` for session records, `plans/`
+for design plans, and `research/` for evidence. Promote durable facts into the
+live layer that owns them.
+""",
+    "routines": """# Routines Guide
+
+Routines are repeatable procedures under `.routines/`. They should describe the
+ordered work, not restate tool models, identifiers, or source-system doctrine.
+Install the `routine` capability to validate and render the routine index.
+""",
+    "audit": """# Audit Guide
+
+`contextkit audit` is advisory by default. `contextkit audit --write` persists a
+report under `.assets/audits/`. v0 checks metadata, weak descriptions, duplicate
+exact claims, internal context links, likely taxonomy mismatch, and inline bloat.
+""",
+    "migration": """# Migration Guide
+
+Start with `contextkit migrate --plan`. Move live durable facts into `.context/`,
+preserve historical records under `.assets/`, and replace host-specific generated
+files only after the compiled ContextKit output matches the project semantics.
+""",
+    "hooks": """# Hooks Guide
+
+`contextkit install-hooks --target codex` writes a thin Codex adapter that calls
+`contextkit build --target codex`. `--target claude` wires a Claude SessionStart
+hook that builds `.claude/rules/CONTEXT.md`.
+""",
+    "capabilities": """# Capabilities Guide
+
+Capabilities remain separate tools. ContextKit includes their project index by
+calling the installed `capabilities` manager when `.capabilities/` is present.
+Capability-owned references and operational state stay inside `.capabilities/`.
+""",
+}
+
+
+def cmd_guide(args: argparse.Namespace) -> None:
+    topic = args.topic or "authoring"
+    guide = GUIDES.get(topic)
+    if guide is None:
+        _die(f"unknown guide topic: {topic}\nAvailable: {', '.join(sorted(GUIDES))}", 6)
+    _emit(guide)
+
+
+def cmd_templates(_: argparse.Namespace) -> None:
+    lines = ["# ContextKit Templates", "", "Project skeleton files:", ""]
+    for rel in sorted(SKELETON_FILES):
+        lines.append(f"- `{rel}`")
+    lines += ["", "Run `contextkit init` to create missing binding and skeleton files."]
+    _emit("\n".join(lines) + "\n")
+
+
+HELP = """contextkit — manager for repo-backed agent project memory.
+
+Commands:
+  contextkit help
+  contextkit doctor [--json]
+  contextkit init [--binding-only] [--json]
+  contextkit adopt [--json]
+  contextkit install-hooks --target codex|claude [--target ...]
+  contextkit build --target codex|claude|all [--json]
+  contextkit audit [--write] [--json]
+  contextkit audit-file <path> [--json]
+  contextkit groom --plan|--apply
+  contextkit migrate --plan|--apply
+  contextkit guide [authoring|assets|routines|audit|migration|hooks|capabilities]
+  contextkit templates
+"""
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="contextkit", add_help=False)
+    sub = parser.add_subparsers(dest="command")
+
+    sub.add_parser("help", add_help=False).set_defaults(func=lambda _args: _emit(HELP))
+    p = sub.add_parser("doctor")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_doctor)
+
+    p = sub.add_parser("init")
+    p.add_argument("--binding-only", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_init, adopt=False)
+
+    p = sub.add_parser("adopt")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_init, binding_only=True, adopt=True)
+
+    p = sub.add_parser("install-hooks")
+    p.add_argument("--target", choices=["codex", "claude"], action="append", required=True)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_install_hooks)
+
+    p = sub.add_parser("build")
+    p.add_argument("--target", choices=["codex", "claude", "all"], default="codex")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("audit")
+    p.add_argument("--write", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_audit)
+
+    p = sub.add_parser("audit-file")
+    p.add_argument("path")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_audit_file)
+
+    p = sub.add_parser("groom")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--plan", action="store_true")
+    group.add_argument("--apply", action="store_true")
+    p.set_defaults(func=cmd_groom)
+
+    p = sub.add_parser("migrate")
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--plan", action="store_true")
+    group.add_argument("--apply", action="store_true")
+    p.set_defaults(func=cmd_migrate)
+
+    p = sub.add_parser("guide")
+    p.add_argument("topic", nargs="?")
+    p.set_defaults(func=cmd_guide)
+
+    sub.add_parser("templates").set_defaults(func=cmd_templates)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        argv = ["help"]
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if not hasattr(args, "func"):
+        _emit(HELP)
+        return 0
+    try:
+        args.func(args)
+        return 0
+    except ContextKitError as exc:
+        sys.stderr.write(str(exc) + "\n")
+        return exc.exit_code
+    except BrokenPipeError:
+        return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
