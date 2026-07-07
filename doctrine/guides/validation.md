@@ -51,32 +51,23 @@ generated output by hand.
 
 ## `audit`: Coherence And Quality
 
-`audit` judges the live context layer. It catches or hints at:
+`audit` runs the machine pass over the project body. Use
+`contextkit guide audit` for the audit procedure, then load the owning guide for
+the layer being judged. Validation owns the sequence; the audit guide owns the
+audit walk; the authoring guides own the layer rules.
 
-- missing or invalid front matter;
-- weak routing descriptions;
-- oversized inline files;
-- duplicate durable facts;
-- internal context links used as routing;
-- assets treated as live doctrine;
-- files that appear to live at the wrong context altitude;
-- historical or comparative framing that should be rewritten as present doctrine;
-- running task state inside live context.
-
-Use `contextkit audit-file <path>` for a focused pass while editing.
+Use `contextkit audit-file <path>` for a focused machine pass while editing, then
+apply the guide named by `contextkit guide audit` for that path.
 
 ## Human Review Checklist
 
 The machine checks are the floor. A human or agent review should also ask:
 
-- Does each file own exactly one domain?
-- Would a future agent know when to load each stub?
-- Is every always-on paragraph worth paying for in every session?
-- Did any asset conclusion need promotion into `context/`?
-- Did any routine copy a model that belongs in context?
-- Did any context file copy a command contract that belongs to a tool?
-- Did the change introduce host-specific assumptions that belong in hooks or
-  targets instead?
+- Which guide owns the layer being reviewed?
+- Did the reviewer load that guide before judging the file?
+- Is every finding tied to the rule source that owns it?
+- Did any issue cross layers and therefore require two rule sources?
+- Did the repair change the owning source instead of generated output?
 - Did the change leave generated files unstaged?
 
 ## Validation Before Commit
