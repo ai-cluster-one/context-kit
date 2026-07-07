@@ -1,9 +1,8 @@
 # ContextKit Operating Doctrine
 
-ContextKit gives an agent a body, not just memory. The body is the visible
-repository structure, the live doctrine that explains how to act, the supporting
-evidence, the repeatable procedures, the enabled tool envelopes, and the host
-bindings that compile all of that into runtime context.
+This is the live doctrine that explains how to act, the supporting evidence, the
+repeatable procedures, the enabled tool envelopes, and the host bindings that
+compile all of that into runtime context.
 
 Always-on context stays compact: orientation, law, routing, safety. Detailed
 authoring and repair mechanics live in on-demand guides.
