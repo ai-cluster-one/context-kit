@@ -1,7 +1,7 @@
 # ContextKit Authoring Guide
 
 Live context authoring under `context/`; project-body owner selection for
-durable facts.
+durable facts; agent-directing Markdown placement.
 
 Durable knowledge has one correct home, at the correct altitude, with enough
 routing metadata for generated context to find it.

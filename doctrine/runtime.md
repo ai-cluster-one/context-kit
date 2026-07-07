@@ -21,6 +21,7 @@ On-demand: authoring guides, validation guides, audit guides, repair guides.
 - `contextkit groom --plan`: repair plan from audit findings.
 
 Flow: run command, load named rule source, edit source file, rerun command.
+Repairs edit source files, never generated output.
 
 ## Laws
 
@@ -64,11 +65,16 @@ definition. Change history lives in git, assets, or audit reports.
 ### Source edits
 
 Edit source files. Do not edit generated files.
+Prefer small auditable edits.
 
 Generated files:
 
 - `.codex/generated/context.md`
 - `.claude/rules/CONTEXT.md`
+
+### Human voice
+
+Drafted human text preserves the user's voice and intent.
 
 ## Body Layers
 
@@ -76,6 +82,8 @@ Generated files:
 
 Technical binding: config, manager marker, ContextKit-native artifacts,
 `.contextkit/audits/`.
+
+Not project body. No live project doctrine.
 
 ### `context/`
 
