@@ -27,23 +27,28 @@ Install:
 curl -fsSL https://raw.githubusercontent.com/ai-cluster-one/context-kit/main/install.sh | sh
 ```
 
-Create a new agent project:
+Bootstrap the current directory:
 
 ```sh
-git init
-contextkit init
-contextkit install-hooks --target codex --target claude
-contextkit build --target all
-contextkit doctor
-contextkit audit
+contextkit bootstrap
 ```
 
-Adopt an existing repository:
+`bootstrap` runs `git init` when `.git` is absent, creates missing ContextKit
+body files, installs Codex and Claude bindings, builds generated context, then
+runs doctor and audit. Existing body files stay in place. Existing
+non-ContextKit files in managed hook paths require confirmation before
+replacement.
+
+Bootstrap a repository that already exists from its root:
+
+```sh
+contextkit bootstrap
+```
+
+If bootstrap reports dot body folders, inspect the migration plan:
 
 ```sh
 contextkit migrate --plan
-contextkit adopt
-contextkit guide bootstrap
 ```
 
 For local development, run the checked-out script directly:
@@ -123,18 +128,81 @@ rules.
 
 ## Core Commands
 
+Bootstrap a project end to end:
+
+```sh
+contextkit bootstrap
+```
+
+Initialize missing binding and body files:
+
 ```sh
 contextkit init
+```
+
+Adopt only the ContextKit binding in an existing project body:
+
+```sh
 contextkit adopt
+```
+
+Inspect a dot-folder or mixed-layout migration:
+
+```sh
 contextkit migrate --plan
+```
+
+Install Codex and Claude host bindings:
+
+```sh
 contextkit install-hooks --target codex --target claude
+```
+
+Build all generated runtime contexts:
+
+```sh
 contextkit build --target all
+```
+
+Check project shape and bindings:
+
+```sh
 contextkit doctor
+```
+
+Run the advisory audit:
+
+```sh
 contextkit audit
+```
+
+Write an audit report under `.contextkit/audits/`:
+
+```sh
 contextkit audit --write
+```
+
+Read the bootstrap guide:
+
+```sh
 contextkit guide bootstrap
+```
+
+Read the authoring guide:
+
+```sh
 contextkit guide authoring
+```
+
+Read the validation guide:
+
+```sh
 contextkit guide validation
+```
+
+Read the destructive-operations guide:
+
+```sh
 contextkit guide destructive
 ```
 
@@ -179,6 +247,8 @@ audit live in the capabilities project and in capability-owned guides.
 The current implementation covers the local, repo-backed agent body:
 
 - project binding through `.contextkit/config.toml`;
+- idempotent bootstrap for git init, missing body creation, hook install,
+  build, doctor, and audit;
 - Codex and Claude context compilation;
 - thin hook installation;
 - routine index inclusion from `routines/**/*.md` front matter;
