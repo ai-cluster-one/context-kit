@@ -8,9 +8,10 @@ On-demand: authoring guides, validation guides, audit guides, repair guides.
 
 ## Commands
 
-- `contextkit bootstrap`: git init when absent, missing body creation, hook
-  install, build, doctor, audit. Existing body files stay in place.
-  Non-ContextKit files in managed hook paths require confirmation.
+- `contextkit bootstrap`: missing body creation, hook install, build, doctor,
+  audit. No-git non-empty directories get a pre-bootstrap checkpoint before
+  project files change. Existing body files stay in place. Non-ContextKit files
+  in managed hook paths require confirmation.
 - `contextkit doctor`: project shape and binding check. Rule sources:
   `contextkit guide validation`, `contextkit guide bootstrap`.
 - `contextkit build --target all`: compile source body into host runtime

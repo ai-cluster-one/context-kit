@@ -33,11 +33,18 @@ Bootstrap the current directory:
 contextkit bootstrap
 ```
 
-`bootstrap` runs `git init` when `.git` is absent, creates missing ContextKit
-body files, installs Codex and Claude bindings, builds generated context, then
-runs doctor and audit. Existing body files stay in place. Existing
-non-ContextKit files in managed hook paths require confirmation before
-replacement.
+`bootstrap` creates missing ContextKit body files, installs Codex and Claude
+bindings, builds generated context, then runs doctor and audit. Existing body
+files stay in place. Existing non-ContextKit files in managed hook paths require
+confirmation before replacement.
+
+When `.git` is absent and the directory already contains files, bootstrap stops
+before project files change and asks to create a pre-bootstrap Git checkpoint.
+The checkpoint initializes Git, stages current files, and commits
+`ContextKit pre-bootstrap checkpoint`.
+
+For non-interactive bootstrap, `contextkit bootstrap --yes` approves checkpoint
+creation and managed hook replacement.
 
 Bootstrap a repository that already exists from its root:
 

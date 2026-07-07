@@ -989,7 +989,12 @@ def _dedupe_targets(targets: list[str] | None) -> list[str]:
 def _ensure_git_repo(root: Path) -> dict[str, Any]:
     git_path = root / ".git"
     if git_path.exists():
-        return {"present": True, "initialized": False, "path": str(git_path)}
+        return {
+            "present": True,
+            "initialized": False,
+            "path": str(git_path),
+            "checkpoint": {"required": False, "created": False},
+        }
     try:
         proc = _run(["git", "init"], root)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -997,7 +1002,120 @@ def _ensure_git_repo(root: Path) -> dict[str, Any]:
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout).strip()
         _die(f"git init failed in {root}: {detail}", 6)
-    return {"present": True, "initialized": True, "path": str(git_path)}
+    return {
+        "present": True,
+        "initialized": True,
+        "path": str(git_path),
+        "checkpoint": {"required": False, "created": False, "reason": "empty directory"},
+    }
+
+
+def _has_prebootstrap_files(root: Path) -> bool:
+    try:
+        children = list(root.iterdir())
+    except OSError:
+        return True
+    for child in children:
+        if child.name in {".git", ".DS_Store"}:
+            continue
+        return True
+    return False
+
+
+def _confirm_prebootstrap_checkpoint(root: Path, yes: bool) -> None:
+    if yes:
+        return
+    lines = [
+        "ContextKit bootstrap found files but no Git repository.",
+        "Create a pre-bootstrap Git checkpoint before ContextKit changes project files.",
+        "",
+        "This runs:",
+        "- git init",
+        "- git add -A",
+        "- git commit -m \"ContextKit pre-bootstrap checkpoint\"",
+        "",
+        f"Project: {root}",
+        "",
+        "Continue?",
+    ]
+    prompt = "\n".join(lines) + " [y/N] "
+    try:
+        with open("/dev/tty", "r+", encoding="utf-8") as tty:
+            tty.write(prompt)
+            tty.flush()
+            answer = tty.readline().strip().lower()
+    except OSError:
+        _die(
+            "\n".join(lines)
+            + "\nRun `contextkit bootstrap --yes` to create the checkpoint automatically.",
+            6,
+        )
+    if answer not in {"y", "yes"}:
+        _die("ContextKit bootstrap cancelled before project files changed.", 6)
+
+
+def _append_git_info_exclude(root: Path) -> None:
+    path = root / ".git" / "info" / "exclude"
+    try:
+        text = path.read_text() if path.exists() else ""
+    except OSError:
+        text = ""
+    existing = {line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")}
+    missing = [line for line in REQUIRED_GITIGNORE_LINES if line not in existing]
+    if not missing:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    addition = "\n# ContextKit local and generated files\n" + "\n".join(missing) + "\n"
+    path.write_text(text.rstrip("\n") + addition)
+
+
+def _git_configured_identity(root: Path) -> bool:
+    name = _run(["git", "config", "--get", "user.name"], root)
+    email = _run(["git", "config", "--get", "user.email"], root)
+    return name.returncode == 0 and bool(name.stdout.strip()) and email.returncode == 0 and bool(email.stdout.strip())
+
+
+def _commit_prebootstrap_checkpoint(root: Path) -> dict[str, Any]:
+    _append_git_info_exclude(root)
+    add = _run(["git", "add", "-A"], root)
+    if add.returncode != 0:
+        detail = (add.stderr or add.stdout).strip()
+        _die(f"pre-bootstrap git add failed in {root}: {detail}", 6)
+    staged = _run(["git", "diff", "--cached", "--quiet"], root)
+    if staged.returncode == 0:
+        return {"required": True, "created": False, "reason": "no tracked files after git add"}
+    if staged.returncode not in {0, 1}:
+        detail = (staged.stderr or staged.stdout).strip()
+        _die(f"pre-bootstrap git diff failed in {root}: {detail}", 6)
+
+    commit_cmd = ["git"]
+    if not _git_configured_identity(root):
+        commit_cmd += ["-c", "user.name=ContextKit", "-c", "user.email=contextkit@local"]
+    commit_cmd += ["commit", "-m", "ContextKit pre-bootstrap checkpoint"]
+    commit = _run(commit_cmd, root)
+    if commit.returncode != 0:
+        detail = (commit.stderr or commit.stdout).strip()
+        _die(f"pre-bootstrap checkpoint commit failed in {root}: {detail}", 6)
+    rev = _run(["git", "rev-parse", "--short", "HEAD"], root)
+    return {
+        "required": True,
+        "created": True,
+        "commit": rev.stdout.strip() if rev.returncode == 0 else "",
+        "message": "ContextKit pre-bootstrap checkpoint",
+    }
+
+
+def _prepare_git_for_bootstrap(root: Path, yes: bool) -> dict[str, Any]:
+    git_path = root / ".git"
+    if git_path.exists():
+        return _ensure_git_repo(root)
+    if not _has_prebootstrap_files(root):
+        return _ensure_git_repo(root)
+
+    _confirm_prebootstrap_checkpoint(root, yes)
+    git = _ensure_git_repo(root)
+    git["checkpoint"] = _commit_prebootstrap_checkpoint(root)
+    return git
 
 
 def _json_object_blocker(root: Path, rel: Path, label: str, blockers: list[str]) -> None:
@@ -1089,6 +1207,10 @@ def _bootstrap_build_target(targets: list[str]) -> str:
 
 
 def _format_bootstrap_result(result: dict[str, Any]) -> str:
+    checkpoint = result["git"].get("checkpoint") or {}
+    git_status = "initialized" if result["git"]["initialized"] else "present"
+    if checkpoint.get("created"):
+        git_status += f", checkpoint {checkpoint.get('commit')}"
     lines = [
         "# ContextKit Bootstrap",
         "",
@@ -1096,7 +1218,7 @@ def _format_bootstrap_result(result: dict[str, Any]) -> str:
         f"Status: {'ready' if result['ready'] else 'needs attention'}",
         "",
         "Steps:",
-        f"- Git: {'initialized' if result['git']['initialized'] else 'present'}",
+        f"- Git: {git_status}",
         f"- Init: {len(result['init']['created'])} created, {len(result['init']['changed'])} changed, {len(result['init']['skipped'])} skipped",
         f"- Hooks: {', '.join(result['targets'])}",
         f"- Build: {', '.join(sorted(result['build']['written']))}",
@@ -1137,10 +1259,10 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
             + "\n".join(f"- {item}" for item in conflicts["blockers"]),
             6,
         )
+    git = _prepare_git_for_bootstrap(root, args.yes)
     _confirm_bootstrap_conflicts(conflicts["confirm"], args.yes)
     confirmed_conflicts = conflicts["confirm"]
 
-    git = _ensure_git_repo(root)
     init = _init_project(root, binding_only=False)
     hooks = _install_hooks(root, targets)
     build_target = _bootstrap_build_target(targets)

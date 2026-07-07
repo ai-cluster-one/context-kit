@@ -13,7 +13,9 @@ contextkit bootstrap
 
 Effects:
 
-- initializes Git when `.git` is absent;
+- initializes Git when `.git` is absent and the directory has no project files;
+- creates a pre-bootstrap Git checkpoint before project file changes when
+  `.git` is absent and the directory already contains files;
 - creates missing `.contextkit/`, `.gitignore`, `.env.local`, `context/`,
   `assets/`, `routines/`, and `capabilities/` entries;
 - leaves existing project body files in place;
@@ -24,6 +26,9 @@ Effects:
 
 Safety contract:
 
+- existing non-git project files get a checkpoint before ContextKit changes
+  project files;
+- `--yes` approves checkpoint creation and managed hook replacement;
 - visible body files are created only when absent;
 - ContextKit-managed generated files are rebuilt from source;
 - existing non-ContextKit files in managed hook paths require confirmation
@@ -77,6 +82,18 @@ contextkit bootstrap
 
 Existing visible body files remain in place. Missing binding files, guards,
 host bindings, generated context, and skeleton files are added.
+
+If `.git` is absent, bootstrap creates a checkpoint before ContextKit changes
+project files:
+
+```sh
+git init
+git add -A
+git commit -m "ContextKit pre-bootstrap checkpoint"
+```
+
+The checkpoint respects existing `.gitignore` rules and ContextKit local secret
+guards.
 
 For dot body folders, inspect the migration plan:
 
