@@ -202,7 +202,7 @@ def _config(root: Path) -> dict[str, Any]:
 
     return {
         "version": raw.get("version", VERSION),
-        "kind": raw.get("kind", "agent-project"),
+        "type": raw.get("type", "agent-project"),
         "sources": sources,
         "targets": targets,
         "raw": raw,
@@ -658,13 +658,7 @@ SKELETON_FILES = {
 
 def _config_body() -> str:
     return """version = 1
-kind = "agent-project"
-
-[sources]
-context = "context"
-assets = "assets"
-routines = "routines"
-capabilities = "capabilities"
+type = "agent-project"
 
 [targets.codex]
 output = ".codex/generated/context.md"
@@ -734,6 +728,8 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
 ROOT="$(cd "$ROOT" && pwd -P)"
 cd "$ROOT"
+
+export PATH="$ROOT/.contextkit/manager:$PATH"
 
 target="codex"
 case "${1:-}" in
@@ -846,7 +842,10 @@ def _wire_claude(root: Path) -> dict[str, Any]:
     if not isinstance(settings, dict):
         settings = {}
     session = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
-    command = "contextkit build --target claude >/dev/null"
+    command = (
+        "/bin/bash -lc 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); "
+        "PATH=\"$root/.contextkit/manager:$PATH\" contextkit build --target claude >/dev/null'"
+    )
     hook_added = False
     if not any("contextkit build --target claude" in (hook or {}).get("command", "")
                for entry in session for hook in (entry or {}).get("hooks", [])):
@@ -928,7 +927,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     report = {
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
-        "kind": cfg["kind"],
+        "type": cfg["type"],
         "ok": not problems,
         "problems": problems,
         "git": _git_state(root),
@@ -951,7 +950,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if args.json:
         _emit(report, True)
         return
-    lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Kind: `{cfg['kind']}`", f"Status: {'ok' if report['ok'] else 'needs attention'}", ""]
+    lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Type: `{cfg['type']}`", f"Status: {'ok' if report['ok'] else 'needs attention'}", ""]
     if problems:
         lines += ["Problems:", *[f"- {problem}" for problem in problems], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]

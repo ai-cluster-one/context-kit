@@ -78,6 +78,23 @@ capabilities/
 visible because they are the agent project's body: its live context, supporting
 materials, repeatable procedures, and capability envelopes.
 
+The default binding is intentionally minimal:
+
+```toml
+version = 1
+type = "agent-project"
+
+[targets.codex]
+output = ".codex/generated/context.md"
+
+[targets.claude]
+output = ".claude/rules/CONTEXT.md"
+```
+
+The standard source folders are `context/`, `assets/`, `routines/`, and
+`capabilities/`. Add a `[sources]` table only when a project deliberately
+overrides one of those paths.
+
 `.gitignore` and `.env.local` are technical bootstrap files. `contextkit init`
 creates the local env file as a non-secret template and makes sure git ignores
 local env, generated runtime context, and capability state.
