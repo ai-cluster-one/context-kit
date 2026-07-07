@@ -317,6 +317,7 @@ def _generated_block(target: str) -> str:
 Context manager: `{CONFIG_REL.as_posix()}`
 Rebuild: `contextkit build --target {target}`
 Doctor: `contextkit doctor`
+Help: `contextkit help`
 Authoring help: `contextkit guide authoring`
 """
 
