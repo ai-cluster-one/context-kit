@@ -11,7 +11,7 @@ contextkit audit --write
 ```
 
 `contextkit audit` is advisory by default. `contextkit audit --write` persists a
-report under `assets/audits/`.
+report under `.contextkit/audits/`.
 
 Fix these classes first:
 

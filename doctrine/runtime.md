@@ -23,5 +23,5 @@
 
 - Use `contextkit audit` for the whole live context and `contextkit audit-file <path>` for one file.
 - Fix missing metadata, weak descriptions, duplicate durable facts, internal context links, inline bloat, and content that lives at the wrong layer.
-- Persist formal reports with `contextkit audit --write` under `assets/audits/`.
+- Persist formal reports with `contextkit audit --write` under `.contextkit/audits/`.
 - After remediation, rebuild and audit again until the project body is coherent.

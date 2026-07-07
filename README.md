@@ -16,7 +16,7 @@ An agent body is the repository shape that lets an agent operate consistently
 across workers and hosts:
 
 - `context/` - live doctrine and routing surface;
-- `assets/` - historical evidence, plans, audits, research, and supporting
+- `assets/` - historical evidence, plans, research, and supporting
   material;
 - `routines/` - repeatable procedures surfaced into runtime context;
 - `capabilities/` - project envelopes for installed tools;
@@ -68,6 +68,7 @@ sequences, including how Codex and Claude receive generated context.
 .contextkit/
   README.md
   config.toml
+  audits/
 .gitignore
 .env.local
 context/
@@ -75,7 +76,6 @@ context/
   guidelines/
   architecture/
 assets/
-  audits/
   sessions/
   plans/
   research/
@@ -137,7 +137,7 @@ The current implementation covers the local, repo-backed agent body:
 - native routine index inclusion from `routines/**/*.md` front matter;
 - native capability index inclusion from `capabilities/settings.json`,
   installed capability snapshots, and visible project envelopes;
-- advisory audit reports with `--write` persistence under `assets/audits/`.
+- advisory audit reports with `--write` persistence under `.contextkit/audits/`.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename
 `.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms

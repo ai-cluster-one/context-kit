@@ -723,7 +723,7 @@ SKELETON_FILES = {
     ),
     "context/guidelines/ASSETS.md": _context_file(
         "Assets", "Map of on-demand asset folders and what belongs in each.", "stub", 120,
-        "Explain `assets/` as supporting project material: audits, sessions, plans, research, and other historical evidence.",
+        "Explain `assets/` as supporting project material: sessions, plans, research, and other historical evidence.",
     ),
     "context/architecture/RUNTIME.md": _context_file(
         "Runtime", "Runtime bodies, host surfaces, generated context, and execution boundaries.", "stub", 200,
@@ -783,7 +783,7 @@ def cmd_init(args: argparse.Namespace) -> None:
     _ensure_gitignore(root, created, changed)
     _ensure_env_local(root, created, skipped)
     if not args.binding_only:
-        for rel in ["assets/audits", "assets/sessions", "assets/plans", "assets/research",
+        for rel in [".contextkit/audits", "assets/sessions", "assets/plans", "assets/research",
                     "routines", "capabilities"]:
             path = root / rel
             if path.exists():
@@ -1192,8 +1192,7 @@ def _audit_report(root: Path, findings: list[Finding]) -> str:
 
 
 def _write_audit(root: Path, report: str) -> Path:
-    cfg = _config(root)
-    target_dir = root / cfg["sources"]["assets"] / "audits"
+    target_dir = root / ".contextkit" / "audits"
     target_dir.mkdir(parents=True, exist_ok=True)
     today = _dt.date.today().isoformat()
     target = target_dir / f"{today}_contextkit-audit.md"
