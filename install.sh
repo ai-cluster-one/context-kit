@@ -26,6 +26,7 @@ guides/validation.md
 guides/assets.md
 guides/routines.md
 guides/audit.md
+guides/destructive.md
 guides/migration.md
 guides/hooks.md
 guides/capabilities.md

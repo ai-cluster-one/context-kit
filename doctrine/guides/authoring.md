@@ -1,8 +1,58 @@
 # ContextKit Authoring Guide
 
-## Creating or editing context files
+Use this guide before creating or substantially editing any agent-directing
+Markdown: `context/**/*.md`, `routines/**/*.md`, supporting `assets/**/*.md`, or
+host instruction files that will be replaced by ContextKit output.
 
-Put current project doctrine in `context/`. Every Markdown file must start with:
+The goal is not to make more documentation. The goal is to give each durable
+piece of knowledge one correct home, at the correct altitude, with enough routing
+metadata that an agent can find it without carrying the whole project in every
+session.
+
+## The Placement Decision
+
+Before writing, classify the material:
+
+- **Current law, identity, architecture, constraints, or stable project model**:
+  write it under `context/`.
+- **Repeatable ordered work**: write it under `routines/`.
+- **Historical evidence, research, plans, raw notes, session records, or
+  snapshots**: write it under `assets/`.
+- **Enabled tool envelopes, identifiers, connection metadata, and capability
+  references**: keep them under `capabilities/`, following the capability
+  manager's own doctrine.
+- **ContextKit native reports**: keep them under `.contextkit/`, especially
+  `.contextkit/audits/`.
+- **Generated host context**: never write it by hand.
+
+Use the differentiator: if the material must be true for future sessions, it is
+live doctrine. If it explains how a past conclusion was reached, it is evidence.
+If it tells the agent how to perform a recurring procedure, it is a routine.
+
+## `context/` Taxonomy
+
+`context/` holds live doctrine. Start with the default folders, then add a new
+folder only when a real domain needs its own shelf.
+
+Use these default homes:
+
+- `context/identity/` - mission, agent role, owner identity, people, entities,
+  stable responsibilities.
+- `context/guidelines/` - project laws, constraints, limitations, decision
+  rules, safety boundaries, quality bars.
+- `context/architecture/` - runtime shape, services, data flow, deployment
+  model, integration boundaries, host surfaces.
+
+Add domain folders only when the default homes would become muddy. Examples:
+`context/product/`, `context/accounting/`, `context/operations/`,
+`context/editorial/`. A folder name should be the domain, not the current task.
+
+Do not create a folder for one orphan note. Put the note in the nearest existing
+home; split later when the shape earns it.
+
+## Context File Contract
+
+Every context file is Markdown with YAML front matter:
 
 ```yaml
 ---
@@ -13,21 +63,230 @@ order: 100
 ---
 ```
 
-Use `load: inline` only when the body is needed in nearly every run. Use
-`load: stub` when the model only needs the title, path, and description until a
-task calls for that doctrine.
+Fields:
 
-## Ownership rules
+- `title`: human-readable label used in generated context.
+- `description`: one line that answers "when should the agent load this file?"
+  It is routing metadata, not a subtitle.
+- `load`: `inline` or `stub`.
+- `order`: numeric sorting key. Files sort by `order`, then path.
 
-- One durable fact has one live home.
-- When adding a fact, identify the owning layer and file before writing.
-- If a fact already exists elsewhere, update or move it instead of duplicating.
-- Make `description` specific enough that the model can decide when to load it.
-- Avoid Markdown links between context files as routing; generated metadata owns routing.
-- Keep live state, worklists, pending balances, and open task scratch out of context.
+Do not add extra front matter fields unless ContextKit learns to use them. Extra
+metadata becomes invisible ceremony.
 
-## After authoring
+## Description Quality
 
-Run `contextkit build --target all` and `contextkit audit`. If the audit points
-to bloat, duplicate facts, weak descriptions, or wrong placement, fix the source
-file and rebuild.
+A weak description says what the file is called. A strong description says when
+the agent needs it.
+
+Weak:
+
+```yaml
+description: Project context and details.
+```
+
+Strong:
+
+```yaml
+description: Load when changing billing behavior, invoice states, or payment reconciliation rules.
+```
+
+Description rules:
+
+- Make it specific to the decision surface.
+- Keep it one line.
+- Name triggers and scope boundaries.
+- Avoid generic words like "notes", "misc", "information", "details", "context".
+- Do not use the description to summarize every fact in the file.
+
+## Load Mode
+
+Use `load: inline` only when the body is needed in nearly every session to keep
+the agent safe, oriented, or aligned. Inline context is paid for every time.
+
+Good inline candidates:
+
+- project mission or identity that changes how every task is interpreted;
+- compact constitutional rules;
+- critical constraints that prevent dangerous work;
+- runtime rules that all host bindings must obey.
+
+Use `load: stub` for everything else. A stub file is still discoverable in
+generated context by title, path, and description. The agent loads it on demand.
+
+Good stub candidates:
+
+- detailed architecture;
+- service maps;
+- domain models;
+- people/entity directories;
+- workflow policies used only for a class of work;
+- long limitations or decision trees.
+
+If an inline file grows past the point where most sessions need every paragraph,
+split it: keep the law inline and move examples, tables, and rare detail into a
+stub file.
+
+## Naming
+
+Name files for the stable domain they own, not for the task that created them.
+
+For canonical, small, standing doctrine in the default folders, prefer clear
+uppercase names:
+
+```text
+context/identity/MISSION.md
+context/guidelines/CONSTITUTION.md
+context/architecture/RUNTIME.md
+```
+
+For a folder that will contain many peer files, use lowercase kebab-case:
+
+```text
+context/product/pricing-model.md
+context/operations/month-end-close.md
+context/integrations/payment-provider.md
+```
+
+Pick one style inside a folder and keep it coherent. Do not encode dates in live
+context filenames; dates are for assets and audit reports.
+
+## Body Contract
+
+Open with the scope: what this file owns and where its boundary ends. Then state
+the current doctrine in present tense.
+
+A good context body:
+
+- states durable facts affirmatively;
+- keeps one fact in one home;
+- names other homes by role only when routing is necessary;
+- avoids change history, migration notes, and "formerly";
+- avoids long copied command contracts or generated output;
+- promotes conclusions from assets without rewriting the evidence;
+- separates law from procedure.
+
+A context body should not:
+
+- store open task lists, balances, checkpoints, or session state;
+- point at `assets/` as if assets are live doctrine;
+- duplicate capability help, schemas, credential rules, or readiness checks;
+- rely on Markdown links between sibling context files for routing;
+- defend itself with noisy self-validation prose.
+
+## Templates
+
+Inline constitutional file:
+
+```markdown
+---
+title: Project Constitution
+description: Always load for project-wide laws, safety boundaries, and doctrine ownership rules.
+load: inline
+order: 100
+---
+
+# Project Constitution
+
+This file owns the project-wide laws that every session must preserve.
+
+## Law Name
+
+State the law in present tense. Say what must hold and why it matters. Put
+procedure, examples, and rare edge cases in a stub or routine.
+```
+
+Stub architecture file:
+
+```markdown
+---
+title: Service Runtime
+description: Load when changing service boundaries, deployment shape, queues, workers, or runtime ownership.
+load: stub
+order: 220
+---
+
+# Service Runtime
+
+This file owns the current runtime shape of the project.
+
+## Services
+
+State the live service model and boundaries.
+
+## Data Flow
+
+State durable flow facts. Keep provider API contracts in the provider capability
+or official docs.
+```
+
+Stub domain model:
+
+```markdown
+---
+title: Invoice Domain Model
+description: Load when changing invoice states, billing transitions, or reconciliation behavior.
+load: stub
+order: 320
+---
+
+# Invoice Domain Model
+
+This file owns the live billing-domain vocabulary and state model.
+
+## States
+
+State the current model. Do not include historical migrations or raw research.
+```
+
+Routine file:
+
+```markdown
+---
+name: month-end-close
+description: Run when closing a reporting month and reconciling project-owned accounting outputs.
+---
+
+# Month-End Close
+
+This routine owns the ordered close procedure. It applies the accounting model by
+role; it does not restate ids, mappings, or capability command contracts.
+```
+
+Asset record:
+
+```markdown
+# 2026-07-07 Billing Provider Research
+
+Purpose: capture evidence gathered while choosing the billing integration model.
+
+## Findings
+
+Record sources, observations, and uncertainty. Promote durable conclusions into
+the owning `context/` file after review.
+```
+
+## Authoring Procedure
+
+1. State the fact or procedure in one sentence.
+2. Search the project for an existing owner with `rg`.
+3. Choose the layer: `context/`, `assets/`, `routines/`, `capabilities/`, or
+   `.contextkit/`.
+4. If writing `context/`, choose folder, filename, `load`, and `order`.
+5. Write only the facts this file owns.
+6. Remove or rewrite duplicates instead of adding a parallel truth.
+7. Run `contextkit build --target all`.
+8. Run `contextkit audit` or `contextkit audit-file <path>`.
+
+## Quality Bar
+
+A new or edited file is good when:
+
+- a future agent can tell from generated context when to load it;
+- the file owns a clear domain and does not leak into neighboring domains;
+- every durable fact has one home;
+- always-on text is small enough to justify its per-session cost;
+- assets remain evidence, not hidden doctrine;
+- routines describe repeatable work without duplicating live models;
+- capability-specific doctrine remains in the capability layer;
+- `contextkit audit` is clean or every remaining warning is deliberate.

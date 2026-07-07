@@ -47,6 +47,7 @@ GUIDE_TOPICS = [
     "assets",
     "routines",
     "audit",
+    "destructive",
     "migration",
     "hooks",
     "capabilities",
@@ -397,7 +398,7 @@ Context manager: `{CONFIG_REL.as_posix()}`
 Rebuild: `contextkit build --target {target}`
 Doctor: `contextkit doctor`
 Help: `contextkit help`
-Guides: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide routines`; `contextkit guide audit`
+Guides: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide assets`; `contextkit guide routines`; `contextkit guide audit`; `contextkit guide destructive`; `contextkit guide capabilities`
 """
 
 
@@ -1092,6 +1093,18 @@ def _content_owner_hint(rel: str, text: str) -> str | None:
     return None
 
 
+def _historical_framing_hint(text: str) -> str | None:
+    if re.search(r"\b(formerly|previously|used to|moved from|migrated from|unlike)\b", text, flags=re.I):
+        return "Rewrite live doctrine in present tense; keep migration history in git, assets, or audit reports."
+    return None
+
+
+def _running_state_hint(text: str) -> str | None:
+    if re.search(r"\b(todo|pending|next action|checkpoint|last sync(?:ed)?|current balance|open task)\b", text, flags=re.I):
+        return "Live context should not hold running task state; move work tracking to the project work system or assets."
+    return None
+
+
 def _normalized_claims(item: ContextFile) -> list[str]:
     claims: list[str] = []
     for raw in re.split(r"[\n.]", item.body):
@@ -1158,6 +1171,20 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
         hint = _content_owner_hint(rel, item.body)
         if hint:
             findings.append(Finding("info", "taxonomy-fit", rel, "File may live at the wrong context altitude.", hint))
+        hint = _historical_framing_hint(item.body)
+        if hint:
+            findings.append(Finding(
+                "warning", "historical-framing", rel,
+                "Live context appears to define itself through history or comparison.",
+                hint,
+            ))
+        hint = _running_state_hint(item.body)
+        if hint:
+            findings.append(Finding(
+                "warning", "running-state-in-context", rel,
+                "Live context appears to contain running task state.",
+                hint,
+            ))
         for claim in _normalized_claims(item):
             claim_owners.setdefault(claim, []).append(rel)
 
@@ -1612,7 +1639,7 @@ Commands:
   contextkit audit-file <path> [--json]
   contextkit groom --plan|--apply
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|validation|assets|routines|audit|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
   contextkit templates
 """
 

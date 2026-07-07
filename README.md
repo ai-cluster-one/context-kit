@@ -2,8 +2,8 @@
 
 ContextKit is a standalone manager for repo-backed agent project bodies. It
 standardizes the visible project structure, durable context, runtime context
-compilation, host bindings, routines, capabilities, audits, and migrations that
-make an agent operable from a repository.
+compilation, host bindings, routines, capabilities, audits, migrations, and the
+operating doctrine that makes an agent work coherently from a repository.
 
 ContextKit is deliberately higher-rank than a normal capability. Capabilities
 remain separate tools; ContextKit discovers and indexes them as one layer of the
@@ -40,6 +40,11 @@ ContextKit doctrine and guides live as Markdown in this repository under
 them from the checkout, from the global install at `~/.contextkit/doctrine`, or
 from `CONTEXTKIT_DOCTRINE_DIR` when that environment variable is set.
 
+The always-on operating doctrine is injected into generated runtime context for
+each host. Detailed authoring, validation, audit, assets, routines, capabilities,
+migration, hooks, and destructive-operation rules are served on demand through
+`contextkit guide <topic>`.
+
 ## Core Commands
 
 ```sh
@@ -54,6 +59,7 @@ contextkit audit --write
 contextkit guide bootstrap
 contextkit guide authoring
 contextkit guide validation
+contextkit guide destructive
 ```
 
 Use `contextkit init` for a new agent project. Use `contextkit migrate --plan`
@@ -138,6 +144,8 @@ The current implementation covers the local, repo-backed agent body:
 - native capability index inclusion from `capabilities/settings.json`,
   installed capability snapshots, and visible project envelopes;
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`.
+- on-demand doctrine guides loaded from the ContextKit source/install, not copied
+  into each project.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename
 `.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms
