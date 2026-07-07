@@ -14,7 +14,6 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -33,18 +32,31 @@ DEFAULT_SOURCES = {
     "routines": "routines",
     "capabilities": "capabilities",
 }
-LEGACY_DOT_SOURCES = {
-    "context": ".context",
-    "assets": ".assets",
-    "routines": ".routines",
-    "capabilities": ".capabilities",
-}
 DEFAULT_TARGETS = {
     "codex": Path(".codex") / "generated" / "context.md",
     "claude": Path(".claude") / "rules" / "CONTEXT.md",
 }
-CODEX_CAPABILITIES_FRAGMENT = Path(".codex") / "generated" / "capabilities.md"
-CODEX_BUILD_ENV = "CAPABILITIES_CODEX_BUILDING"
+CAP_HOME = Path(os.environ.get("CAPABILITIES_HOME") or (Path.home() / ".capabilities"))
+
+REQUIRED_GITIGNORE_LINES = [
+    ".env",
+    ".env.local",
+    ".env.*.local",
+    ".codex/generated/",
+    ".claude/rules/CONTEXT.md",
+    "capabilities/*/state/",
+    "__pycache__/",
+    "*.pyc",
+    ".DS_Store",
+]
+
+ENV_LOCAL_BODY = """# Local machine-only environment for this agent project.
+# Keep secrets and machine-local overrides here. This file is ignored by git.
+#
+# Examples:
+# CAPABILITIES_HOME=/Users/you/.capabilities
+# CONTEXTKIT_ENV=local
+"""
 
 
 class ContextKitError(Exception):
@@ -113,29 +125,6 @@ def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
     )
 
 
-@contextmanager
-def _legacy_alias(root: Path, source_dir: Path, legacy_name: str,
-                  warnings: list[str]):
-    """Temporarily expose visible folders to older CLIs that still expect dots."""
-    source = root / source_dir
-    alias = root / legacy_name
-    created = False
-    if source_dir.as_posix() != legacy_name and source.is_dir() and not alias.exists():
-        try:
-            alias.symlink_to(source_dir, target_is_directory=True)
-            created = True
-        except OSError as exc:
-            warnings.append(f"could not bridge `{source_dir}` to `{legacy_name}`: {exc}")
-    try:
-        yield
-    finally:
-        if created:
-            try:
-                alias.unlink()
-            except OSError as exc:
-                warnings.append(f"could not remove temporary `{legacy_name}` bridge: {exc}")
-
-
 def _git_root(start: Path) -> Path | None:
     try:
         proc = _run(["git", "rev-parse", "--show-toplevel"], start)
@@ -152,23 +141,13 @@ def _find_project_root(start: Path | None = None) -> Path:
     for directory in (here, *here.parents):
         if (directory / CONFIG_REL).exists():
             return directory
-        if (directory / "context").is_dir() or (directory / ".context").is_dir():
+        if (directory / "context").is_dir():
             return directory
         if (directory / ".git").is_dir():
             return directory
         if directory == home:
             break
     return _git_root(here) or here
-
-
-def _source_defaults(root: Path) -> dict[str, str]:
-    """Prefer visible project-body folders, but adopt old dot folders in place."""
-    sources = dict(DEFAULT_SOURCES)
-    for key, visible in DEFAULT_SOURCES.items():
-        legacy = LEGACY_DOT_SOURCES[key]
-        if not (root / visible).exists() and (root / legacy).exists():
-            sources[key] = legacy
-    return sources
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -184,8 +163,16 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
-    sources = _source_defaults(root)
+    sources = dict(DEFAULT_SOURCES)
     sources.update((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
+    for name, rel in sources.items():
+        if Path(rel).parts and Path(rel).parts[0].startswith("."):
+            _die(
+                f"invalid source path for {name}: {rel}\n"
+                "ContextKit project-body folders are visible: context/, assets/, routines/, capabilities/.\n"
+                "Use `contextkit migrate --plan` for legacy dot-folder projects.",
+                6,
+            )
 
     targets: dict[str, Path] = dict(DEFAULT_TARGETS)
     raw_targets = raw.get("targets") if isinstance(raw.get("targets"), dict) else {}
@@ -269,6 +256,13 @@ def _read_context_file(root: Path, path: Path) -> tuple[ContextFile | None, list
 def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], list[str]]:
     base = root / context_dir
     if not base.is_dir():
+        legacy = root / f".{context_dir.as_posix()}"
+        if not context_dir.as_posix().startswith(".") and legacy.is_dir():
+            _die(
+                f"context source directory not found: {context_dir}\n"
+                f"Legacy `{legacy.name}/` exists. Rename it to `{context_dir.as_posix()}/` before building with ContextKit.",
+                6,
+            )
         _die(
             f"context source directory not found: {context_dir}\n"
             "Run `contextkit init` to create a project skeleton.",
@@ -307,67 +301,175 @@ Authoring help: `contextkit guide authoring`
 """
 
 
-def _routine_index(root: Path, routines_dir: Path, capabilities_dir: Path, warnings: list[str]) -> str:
+def _one_line(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _visible_project_terms(value: str) -> str:
+    replacements = {
+        "`.context`": "`context/`",
+        "`.context/`": "`context/`",
+        "`.assets`": "`assets/`",
+        "`.assets/`": "`assets/`",
+        "`.routines`": "`routines/`",
+        "`.routines/`": "`routines/`",
+        "`.capabilities`": "`capabilities/`",
+        "`.capabilities/`": "`capabilities/`",
+    }
+    for old, new in replacements.items():
+        value = value.replace(old, new)
+    return value
+
+
+def _frontmatter_name_description(path: Path) -> tuple[str, str]:
+    try:
+        fm, _body = _parse_frontmatter(path.read_text())
+    except OSError:
+        return "", ""
+    return fm.get("name", "").strip(), fm.get("description", "").strip()
+
+
+def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
     if not (root / routines_dir).is_dir():
         warnings.append(f"routine layer not present; add `{routines_dir.as_posix()}/` or run `contextkit guide routines`")
         return ""
-    routine = shutil.which("routine")
-    if not routine:
-        warnings.append("routine CLI not found; routine index omitted")
-        return ""
+    routines: list[tuple[str, str, Path]] = []
+    for path in sorted((root / routines_dir).rglob("*.md")):
+        name, description = _frontmatter_name_description(path)
+        rel = Path(_rel(root, path))
+        if not name:
+            warnings.append(f"routine missing frontmatter name: {rel.as_posix()}")
+            continue
+        if not description:
+            warnings.append(f"routine missing frontmatter description: {rel.as_posix()}")
+            continue
+        if name != path.stem:
+            warnings.append(f"routine name `{name}` does not match filename stem `{path.stem}`: {rel.as_posix()}")
+        routines.append((name, _one_line(description), rel))
+    lines = [
+        "# Routines (repeatable procedures)",
+        "",
+        "Each is a self-contained recipe. Load its file when you need to run that procedure.",
+        "",
+    ]
+    if not routines:
+        lines += ["No routines are declared in this project.", ""]
+    else:
+        for name, description, rel in routines:
+            lines.append(f"- **[{name}]({rel.as_posix()})** - {description}")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def _load_capability_snapshots(name: str) -> tuple[str | None, dict[str, Any] | None]:
+    reg = CAP_HOME / name
+    stub = None
     try:
-        with _legacy_alias(root, routines_dir, ".routines", warnings):
-            with _legacy_alias(root, capabilities_dir, ".capabilities", warnings):
-                proc = _run([routine, "index"], root, env={"CLAUDE_PROJECT_DIR": str(root)})
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        warnings.append(f"routine index failed: {exc}")
-        return ""
-    if proc.returncode != 0:
-        warnings.append(f"routine index failed; routine index omitted: {(proc.stderr or proc.stdout).strip()}")
-        return ""
-    return proc.stdout.strip() + "\n"
+        stub = (reg / "stub").read_text().strip()
+    except OSError:
+        pass
+    manifest = _read_json(reg / "manifest.json")
+    return stub, manifest if isinstance(manifest, dict) else None
+
+
+def _capability_gate(root: Path, capabilities_dir: Path) -> dict[str, Any]:
+    gate = _read_json(root / capabilities_dir / "settings.json")
+    if gate is None or not isinstance(gate, dict) or not isinstance(gate.get("capabilities"), dict):
+        return {"capabilities": {}}
+    return gate
+
+
+def _capability_ids_summary(envdir: Path, name: str) -> str | None:
+    ids = _read_json(envdir / "identifiers.json")
+    if isinstance(ids, dict) and ids:
+        return f"- Identifiers ({len(ids)}): inspect `capabilities/{name}/identifiers.json` for the full labelled list"
+    if ids is not None:
+        return f"- Identifiers file present but not a JSON object - fix `capabilities/{name}/identifiers.json`"
+    return None
+
+
+def _capability_connections_summary(envdir: Path) -> str | None:
+    conns = _read_json(envdir / "connections.json")
+    valid = (isinstance(conns, dict)
+             and isinstance(conns.get("connections"), dict)
+             and conns["connections"])
+    if valid:
+        default = conns.get("default")
+        items = "; ".join(
+            cid + ("*" if cid == default else "")
+            + (" (read-only)" if isinstance(entry, dict)
+               and entry.get("allow_write") is False else "")
+            for cid, entry in sorted(conns["connections"].items())
+        )
+        return f"- Connections (`--connection <id>`; * = default): {items}"
+    if conns is not None:
+        return "- Connections file present but not a valid envelope - fix `connections.json`"
+    return None
+
+
+def _capability_references(root: Path, envdir: Path) -> list[str]:
+    refs: list[str] = []
+    refdir = envdir / "reference"
+    if not refdir.is_dir():
+        return refs
+    for md in sorted(refdir.glob("*.md")):
+        name, description = _frontmatter_name_description(md)
+        if not name:
+            continue
+        rel = _rel(root, md)
+        suffix = f" - {_one_line(description)}" if description else ""
+        refs.append(f"- `{rel}`{suffix}")
+    return refs
 
 
 def _capability_index(root: Path, capabilities_dir: Path, warnings: list[str]) -> str:
     if not (root / capabilities_dir).is_dir():
         warnings.append(f"capability layer not present; add `{capabilities_dir.as_posix()}/` or run `contextkit guide capabilities`")
         return ""
-    manager = shutil.which("capabilities")
-    if not manager:
-        warnings.append("capabilities CLI not found; capability index omitted")
-        return ""
-    fragment = root / CODEX_CAPABILITIES_FRAGMENT
-    try:
-        fragment.unlink(missing_ok=True)
-    except OSError:
-        pass
-    try:
-        with _legacy_alias(root, capabilities_dir, ".capabilities", warnings):
-            proc = _run(
-                [manager, "context", "--codex"],
-                root,
-                env={CODEX_BUILD_ENV: "1", "CLAUDE_PROJECT_DIR": str(root)},
-            )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        warnings.append(f"capabilities context --codex failed: {exc}")
-        return ""
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip()
-        warnings.append(f"capabilities context --codex failed; capability index omitted: {detail}")
-        return ""
-    if not fragment.exists():
-        warnings.append("capabilities context --codex produced no fragment; capability index omitted")
-        return ""
-    try:
-        text = fragment.read_text()
-    except OSError as exc:
-        warnings.append(f"cannot read capability fragment: {exc}")
-        return ""
-    try:
-        fragment.unlink(missing_ok=True)
-    except OSError:
-        pass
-    return text.strip() + "\n"
+    gate = _capability_gate(root, capabilities_dir)
+    enabled = sorted(
+        name for name, entry in gate["capabilities"].items()
+        if isinstance(entry, dict) and entry.get("enabled") is True
+    )
+    lines = ["# Capabilities", "", "<!-- capabilities:begin - generated by ContextKit; do not edit -->", ""]
+    if not enabled:
+        lines += [
+            "No capabilities are enabled in this project. Install and enable capabilities, then record the gate in `capabilities/settings.json`.",
+            "",
+        ]
+    else:
+        lines += [
+            "Each enabled capability is a CLI on PATH. `<name> help` is the full contract; `<name> doctor` proves readiness.",
+            "Exit 4 is policy - a disabled capability or a read-only connection; ask the user, never lift a gate yourself.",
+            "",
+        ]
+    for name in enabled:
+        stub, manifest = _load_capability_snapshots(name)
+        envdir = root / capabilities_dir / name
+        lines += [f"## {name}", ""]
+        if stub is None:
+            lines += [f"Enabled but not installed - run `capabilities install {name}`.", ""]
+            continue
+        lines += [_visible_project_terms(_one_line(stub)), ""]
+        bullet: list[str] = []
+        conn_summary = _capability_connections_summary(envdir)
+        if conn_summary:
+            bullet.append(conn_summary)
+        ids_summary = _capability_ids_summary(envdir, name)
+        if ids_summary:
+            bullet.append(ids_summary)
+        topics = ((manifest or {}).get("docs") or {}).get("topics") or []
+        if topics:
+            bullet.append(f"- Guides (`{name} guide <topic>`): " + ", ".join(sorted(topics)))
+        refs = _capability_references(root, envdir)
+        if refs:
+            if bullet:
+                bullet.append("")
+            bullet += ["**References** (load on demand):", "", *refs]
+        if bullet:
+            lines += bullet + [""]
+    lines += ["<!-- capabilities:end -->", ""]
+    return "\n".join(lines)
 
 
 def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
@@ -380,7 +482,7 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     inline = [item for item in files if item.load == "inline"]
     stubs = [item for item in files if item.load == "stub"]
-    routine_index = _routine_index(root, routines_dir, capabilities_dir, warnings)
+    routine_index = _routine_index(root, routines_dir, warnings)
     capability_index = _capability_index(root, capabilities_dir, warnings)
 
     title = "Codex" if target == "codex" else "Claude"
@@ -453,6 +555,31 @@ def _write_if_missing(path: Path, body: str, created: list[str], skipped: list[s
         return
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
+    created.append(str(path))
+
+
+def _ensure_gitignore(root: Path, created: list[str], changed: list[str]) -> None:
+    path = root / ".gitignore"
+    if not path.exists():
+        path.write_text("# ContextKit local and generated files\n" + "\n".join(REQUIRED_GITIGNORE_LINES) + "\n")
+        created.append(str(path))
+        return
+    text = path.read_text()
+    existing = {line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")}
+    missing = [line for line in REQUIRED_GITIGNORE_LINES if line not in existing]
+    if not missing:
+        return
+    addition = "\n# ContextKit local and generated files\n" + "\n".join(missing) + "\n"
+    path.write_text(text.rstrip("\n") + "\n" + addition)
+    changed.append(str(path))
+
+
+def _ensure_env_local(root: Path, created: list[str], skipped: list[str]) -> None:
+    path = root / ".env.local"
+    if path.exists():
+        skipped.append(str(path))
+        return
+    path.write_text(ENV_LOCAL_BODY)
     created.append(str(path))
 
 
@@ -553,9 +680,12 @@ envelopes under `capabilities/`.
 def cmd_init(args: argparse.Namespace) -> None:
     root = _find_project_root() if args.adopt else Path.cwd().resolve()
     created: list[str] = []
+    changed: list[str] = []
     skipped: list[str] = []
     _write_if_missing(root / CONFIG_REL, _config_body(), created, skipped)
     _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
+    _ensure_gitignore(root, created, changed)
+    _ensure_env_local(root, created, skipped)
     for rel in ["assets/audits", "assets/sessions", "assets/plans", "assets/research",
                 "routines", "capabilities"]:
         path = root / rel
@@ -564,10 +694,11 @@ def cmd_init(args: argparse.Namespace) -> None:
         else:
             path.mkdir(parents=True, exist_ok=True)
             created.append(str(path))
+    _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
     if not args.binding_only:
         for rel, body in SKELETON_FILES.items():
             _write_if_missing(root / rel, body, created, skipped)
-    _emit({"project": str(root), "created": created, "skipped": skipped}, args.json)
+    _emit({"project": str(root), "created": created, "changed": changed, "skipped": skipped}, args.json)
 
 
 def _codex_adapter() -> str:
@@ -696,22 +827,66 @@ def _git_state(root: Path) -> dict[str, Any]:
     return out
 
 
+def _gitignore_patterns(root: Path) -> set[str]:
+    path = root / ".gitignore"
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return set()
+    return {line.strip() for line in lines if line.strip() and not line.strip().startswith("#")}
+
+
+def _required_project_files(root: Path) -> dict[str, dict[str, Any]]:
+    return {
+        ".contextkit/config.toml": {"path": str(root / CONFIG_REL), "present": (root / CONFIG_REL).exists()},
+        ".contextkit/README.md": {"path": str(root / README_REL), "present": (root / README_REL).exists()},
+        ".gitignore": {"path": str(root / ".gitignore"), "present": (root / ".gitignore").exists()},
+        ".env.local": {"path": str(root / ".env.local"), "present": (root / ".env.local").exists()},
+        "capabilities/settings.json": {
+            "path": str(root / "capabilities" / "settings.json"),
+            "present": (root / "capabilities" / "settings.json").exists(),
+        },
+    }
+
+
+def _guard_report(root: Path) -> dict[str, bool]:
+    patterns = _gitignore_patterns(root)
+    return {line: line in patterns for line in REQUIRED_GITIGNORE_LINES}
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     root = _find_project_root()
     cfg = _config(root)
     sources = cfg["sources"]
+    required_files = _required_project_files(root)
+    gitignore_guards = _guard_report(root)
+    legacy_dot_layers = [
+        rel for rel in [".context", ".assets", ".routines", ".capabilities"]
+        if (root / rel).exists()
+    ]
+    layers = {
+        name: {
+            "path": str(root / rel),
+            "present": (root / rel).exists(),
+        }
+        for name, rel in sources.items()
+    }
+    problems: list[str] = []
+    problems += [f"missing required file: {name}" for name, item in required_files.items() if not item["present"]]
+    problems += [f"missing .gitignore guard: {pattern}" for pattern, present in gitignore_guards.items() if not present]
+    problems += [f"missing project layer: {name} ({item['path']})" for name, item in layers.items() if not item["present"]]
+    problems += [f"legacy dot layer present: {rel} -> {rel[1:]}" for rel in legacy_dot_layers]
     report = {
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "kind": cfg["kind"],
+        "ok": not problems,
+        "problems": problems,
         "git": _git_state(root),
-        "layers": {
-            name: {
-                "path": str(root / rel),
-                "present": (root / rel).exists(),
-            }
-            for name, rel in sources.items()
-        },
+        "required_files": required_files,
+        "gitignore_guards": gitignore_guards,
+        "legacy_dot_layers": legacy_dot_layers,
+        "layers": layers,
         "tools": {
             "contextkit": str(Path(sys.argv[0]).resolve()),
             "capabilities": shutil.which("capabilities"),
@@ -727,8 +902,22 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     if args.json:
         _emit(report, True)
         return
-    lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Kind: `{cfg['kind']}`", ""]
+    lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Kind: `{cfg['kind']}`", f"Status: {'ok' if report['ok'] else 'needs attention'}", ""]
+    if problems:
+        lines += ["Problems:", *[f"- {problem}" for problem in problems], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
+    lines += ["Required files:"]
+    for name, item in report["required_files"].items():
+        marker = "present" if item["present"] else "missing"
+        lines.append(f"- {name}: {marker}")
+    lines += ["", "Gitignore guards:"]
+    for pattern, present in report["gitignore_guards"].items():
+        marker = "present" if present else "missing"
+        lines.append(f"- `{pattern}`: {marker}")
+    if report["legacy_dot_layers"]:
+        lines += ["", "Legacy dot layers:"]
+        lines += [f"- `{rel}` should be renamed to `{rel[1:]}`" for rel in report["legacy_dot_layers"]]
+    lines.append("")
     lines += ["Layers:"]
     for name, item in report["layers"].items():
         marker = "present" if item["present"] else "missing"
@@ -947,8 +1136,8 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         _die("contextkit migrate --apply is not implemented in v0; use --plan first", 6)
     candidates = [
         "CLAUDE.md", "AGENTS.md", ".claude/rules", ".codex/generated/context.md",
-        ".codex/hooks/build-context.sh", "routines", "capabilities", "context",
-        ".routines", ".capabilities", ".context",
+        ".codex/hooks/build-context.sh", "assets", "routines", "capabilities", "context",
+        ".assets", ".routines", ".capabilities", ".context",
     ]
     lines = ["# ContextKit Migration Plan", "", f"Project: `{root}`", "", "Detected surfaces:", ""]
     for rel in candidates:
@@ -965,7 +1154,7 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         "3. Preserve historical material under `assets/`.",
         "4. Run `contextkit build --target all` and compare generated host context.",
         "5. Replace local host compilers with `contextkit install-hooks` after review.",
-        "6. For legacy projects, rename `.context`/`.assets`/`.routines`/`.capabilities` to their visible forms when the neighboring CLIs are ready.",
+        "6. For legacy projects, rename `.context`/`.assets`/`.routines`/`.capabilities` to their visible forms before building.",
         "",
         "Deletion of root host instruction files is intentionally manual in v0.",
     ]
@@ -1016,10 +1205,9 @@ hook that builds `.claude/rules/CONTEXT.md`.
 """,
     "capabilities": """# Capabilities Guide
 
-Capabilities remain separate tools. ContextKit includes their project index by
-calling the installed `capabilities` manager when `capabilities/` is present.
-Until the capabilities manager natively supports visible folders, ContextKit
-bridges `capabilities/` to `.capabilities` only while generating the index.
+Capabilities remain separate tools. ContextKit includes their project index from
+`capabilities/settings.json`, installed capability snapshots, and each enabled
+capability's visible project envelope under `capabilities/<name>/`.
 Capability-owned references and operational state stay inside `capabilities/`.
 """,
 }

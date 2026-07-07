@@ -38,6 +38,8 @@ contextkit guide authoring
 .contextkit/
   README.md
   config.toml
+.gitignore
+.env.local
 context/
   identity/
   guidelines/
@@ -49,11 +51,16 @@ assets/
   research/
 routines/
 capabilities/
+  settings.json
 ```
 
 `.contextkit/` is the technical manager binding. The other top-level folders are
 visible because they are the agent project's body and memory, not hidden tool
 internals.
+
+`.gitignore` and `.env.local` are technical bootstrap files. `contextkit init`
+creates the local env file as a non-secret template and makes sure git ignores
+local env, generated runtime context, and capability state.
 
 Context files are Markdown files with front matter:
 
@@ -76,13 +83,13 @@ The current implementation covers the local/repo-backed step:
 - project binding through `.contextkit/config.toml`;
 - Codex and Claude context compilation;
 - thin hook installation;
-- routine index inclusion when the `routine` CLI is available;
-- capability index inclusion when the `capabilities` CLI and `capabilities/`
-  are present;
+- native routine index inclusion from `routines/**/*.md` front matter;
+- native capability index inclusion from `capabilities/settings.json`,
+  installed capability snapshots, and visible project envelopes;
 - advisory audit reports with `--write` persistence under `assets/audits/`.
 
-Legacy dot-folder projects are still supported. If `context/` is absent but
-`.context/` exists, ContextKit adopts the legacy path in place; the same fallback
-applies to assets, routines, and capabilities.
+Legacy dot-folder projects are migration inputs, not runtime defaults. Rename
+`.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms
+before building with ContextKit.
 
 Migration and groom apply modes are intentionally conservative in v0.

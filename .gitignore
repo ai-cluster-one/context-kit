@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
+.env
+.env.local
+.env.*.local
+.codex/generated/
+.claude/rules/CONTEXT.md
+capabilities/*/state/
