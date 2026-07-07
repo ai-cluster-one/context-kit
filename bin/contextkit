@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""contextkit — manager for repo-backed agent project memory."""
+"""contextkit — manager for repo-backed agent project bodies."""
 
 from __future__ import annotations
 
@@ -623,7 +623,7 @@ SKELETON_FILES = {
     ),
     "context/guidelines/ASSETS.md": _context_file(
         "Assets", "Map of on-demand asset folders and what belongs in each.", "stub", 120,
-        "Explain `assets/` as supporting memory: audits, sessions, plans, research, and other historical material.",
+        "Explain `assets/` as supporting project material: audits, sessions, plans, research, and other historical evidence.",
     ),
     "context/architecture/RUNTIME.md": _context_file(
         "Runtime", "Runtime bodies, host surfaces, generated context, and execution boundaries.", "stub", 200,
@@ -657,10 +657,12 @@ output = ".claude/rules/CONTEXT.md"
 def _binding_readme() -> str:
     return """# ContextKit Binding
 
-This repository is managed by ContextKit, a local manager for agent project memory.
+This repository is managed by ContextKit, a local manager for agent project structure and runtime context.
 
-Project facts stay in this repository. ContextKit owns the shape, compiler, templates,
-guides, and audit tooling that turn those facts into host runtime context.
+The agent body stays in this repository: live context, supporting assets,
+repeatable routines, and capability envelopes. ContextKit owns the shape,
+compiler, templates, host bindings, guides, and audit tooling that turn that
+body into Codex and Claude runtime context.
 
 Common commands:
 
@@ -671,7 +673,7 @@ Common commands:
 - `contextkit audit`
 - `contextkit guide authoring`
 
-Add durable project memory under `context/`. Put historical or supporting material
+Add durable project context under `context/`. Put historical or supporting material
 under `assets/`. Put repeatable procedures under `routines/`. Put installed tool
 envelopes under `capabilities/`.
 """
@@ -1149,7 +1151,7 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         "",
         "Suggested path:",
         "",
-        "1. Run `contextkit init --binding-only` to add `.contextkit/` without replacing project memory.",
+        "1. Run `contextkit init --binding-only` to add `.contextkit/` without replacing the project body.",
         "2. Move durable live facts into `context/` files with front matter.",
         "3. Preserve historical material under `assets/`.",
         "4. Run `contextkit build --target all` and compare generated host context.",
@@ -1173,7 +1175,7 @@ GUIDES = {
 """,
     "assets": """# Assets Guide
 
-`assets/` holds supporting memory, not always-on doctrine.
+`assets/` holds supporting project material, not always-on doctrine.
 
 Use `audits/` for persisted reviews, `sessions/` for session records, `plans/`
 for design plans, and `research/` for evidence. Promote durable facts into the
@@ -1229,7 +1231,7 @@ def cmd_templates(_: argparse.Namespace) -> None:
     _emit("\n".join(lines) + "\n")
 
 
-HELP = """contextkit — manager for repo-backed agent project memory.
+HELP = """contextkit — manager for repo-backed agent project bodies and runtime context.
 
 Commands:
   contextkit help

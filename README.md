@@ -1,12 +1,26 @@
 # ContextKit
 
-ContextKit is a standalone manager for repo-backed agent project memory. It
-standardizes how an agent project's durable context is structured, compiled into
-Codex or Claude runtime context, audited, and migrated.
+ContextKit is a standalone manager for repo-backed agent project bodies. It
+standardizes the visible project structure, durable context, runtime context
+compilation, host bindings, routines, capabilities, audits, and migrations that
+make an agent operable from a repository.
 
 ContextKit is deliberately higher-rank than a normal capability. Capabilities
-remain separate tools; ContextKit discovers and indexes them as one layer of an
-agent project.
+remain separate tools; ContextKit discovers and indexes them as one layer of the
+agent body.
+
+## What It Manages
+
+An agent body is the repository shape that lets an agent operate consistently
+across workers and hosts:
+
+- `context/` - live doctrine and routing surface;
+- `assets/` - historical evidence, plans, audits, research, and supporting
+  material;
+- `routines/` - repeatable procedures surfaced into runtime context;
+- `capabilities/` - project envelopes for installed tools;
+- `.contextkit/` - the technical binding, config, and manager-facing marker;
+- `.codex/` and `.claude/` outputs/hooks - generated host runtime context.
 
 ## Install
 
@@ -55,8 +69,8 @@ capabilities/
 ```
 
 `.contextkit/` is the technical manager binding. The other top-level folders are
-visible because they are the agent project's body and memory, not hidden tool
-internals.
+visible because they are the agent project's body: its live context, supporting
+materials, repeatable procedures, and capability envelopes.
 
 `.gitignore` and `.env.local` are technical bootstrap files. `contextkit init`
 creates the local env file as a non-secret template and makes sure git ignores
@@ -78,7 +92,7 @@ as title, path, and description only. Files sort by numeric `order`, then path.
 
 ## v0 Scope
 
-The current implementation covers the local/repo-backed step:
+The current implementation covers the local, repo-backed agent body:
 
 - project binding through `.contextkit/config.toml`;
 - Codex and Claude context compilation;
