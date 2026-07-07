@@ -97,6 +97,26 @@ class Finding:
         return out
 
 
+@dataclass
+class MigrationStep:
+    title: str
+    action: str
+    status: str
+    detail: str
+    command: str = ""
+
+    def as_dict(self) -> dict[str, str]:
+        out = {
+            "title": self.title,
+            "action": self.action,
+            "status": self.status,
+            "detail": self.detail,
+        }
+        if self.command:
+            out["command"] = self.command
+        return out
+
+
 def _die(message: str, exit_code: int = 1) -> None:
     raise ContextKitError(message, exit_code)
 
@@ -688,18 +708,20 @@ def cmd_init(args: argparse.Namespace) -> None:
     _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
     _ensure_gitignore(root, created, changed)
     _ensure_env_local(root, created, skipped)
-    for rel in ["assets/audits", "assets/sessions", "assets/plans", "assets/research",
-                "routines", "capabilities"]:
-        path = root / rel
-        if path.exists():
-            skipped.append(str(path))
-        else:
-            path.mkdir(parents=True, exist_ok=True)
-            created.append(str(path))
-    _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
     if not args.binding_only:
+        for rel in ["assets/audits", "assets/sessions", "assets/plans", "assets/research",
+                    "routines", "capabilities"]:
+            path = root / rel
+            if path.exists():
+                skipped.append(str(path))
+            else:
+                path.mkdir(parents=True, exist_ok=True)
+                created.append(str(path))
+        _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
         for rel, body in SKELETON_FILES.items():
             _write_if_missing(root / rel, body, created, skipped)
+    elif (root / "capabilities").is_dir():
+        _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
     _emit({"project": str(root), "created": created, "changed": changed, "skipped": skipped}, args.json)
 
 
@@ -1131,36 +1153,321 @@ def cmd_groom(args: argparse.Namespace) -> None:
     _emit("\n".join(lines) + "\n")
 
 
+def _tree_stats(path: Path) -> dict[str, int]:
+    stats = {"files": 0, "dirs": 0}
+    if not path.exists():
+        return stats
+    for child in path.rglob("*"):
+        if child.is_dir():
+            stats["dirs"] += 1
+        elif child.is_file():
+            stats["files"] += 1
+    return stats
+
+
+def _relative_file_set(path: Path) -> set[str]:
+    if not path.is_dir():
+        return set()
+    files: set[str] = set()
+    for child in path.rglob("*"):
+        if child.is_file():
+            files.add(child.relative_to(path).as_posix())
+    return files
+
+
+def _git_status_paths(root: Path, rels: list[str]) -> list[str]:
+    if not (root / ".git").exists():
+        return []
+    try:
+        proc = _run(["git", "status", "--porcelain", "--untracked-files=all", "--", *rels], root)
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    paths: list[str] = []
+    for raw in proc.stdout.splitlines():
+        if len(raw) < 4:
+            continue
+        path = raw[3:]
+        if " -> " in path:
+            path = path.split(" -> ", 1)[1]
+        paths.append(path)
+    return paths
+
+
+def _visible_layer_steps(root: Path) -> list[MigrationStep]:
+    steps: list[MigrationStep] = []
+    for visible in ("context", "assets", "routines", "capabilities"):
+        legacy = root / f".{visible}"
+        target = root / visible
+        dirty = _git_status_paths(root, [f".{visible}", visible])
+        dirty_detail = ""
+        if dirty:
+            sample = ", ".join(f"`{item}`" for item in dirty[:8])
+            dirty_detail = f" Git has uncommitted entries under this layer: {sample}" + (" ..." if len(dirty) > 8 else "")
+        if legacy.exists() and not target.exists():
+            stats = _tree_stats(legacy)
+            steps.append(MigrationStep(
+                title=f"Rename `.{visible}/` to `{visible}/`",
+                action="rename",
+                status="manual" if dirty else "ready",
+                detail=f"Legacy layer exists with {stats['files']} files and {stats['dirs']} directories; visible target is absent.{dirty_detail}",
+                command=f"git mv .{visible} {visible}",
+            ))
+        elif legacy.exists() and target.exists():
+            legacy_files = _relative_file_set(legacy)
+            target_files = _relative_file_set(target)
+            collisions = sorted(legacy_files & target_files)
+            legacy_stats = _tree_stats(legacy)
+            target_stats = _tree_stats(target)
+            if collisions:
+                steps.append(MigrationStep(
+                    title=f"Merge `.{visible}/` into existing `{visible}/`",
+                    action="merge",
+                    status="manual",
+                    detail=(
+                        f"Both source and target exist. Legacy has {legacy_stats['files']} files; "
+                        f"target has {target_stats['files']} files. {len(collisions)} relative paths collide: "
+                        + ", ".join(f"`{item}`" for item in collisions[:8])
+                        + (" ..." if len(collisions) > 8 else "")
+                    ),
+                ))
+            else:
+                steps.append(MigrationStep(
+                    title=f"Merge `.{visible}/` into existing `{visible}/`",
+                    action="merge",
+                    status="manual" if dirty else "ready",
+                    detail=(
+                        f"Both source and target exist, but no file paths collide. Legacy has {legacy_stats['files']} files; "
+                        f"target has {target_stats['files']} files. Preserve existing target-only content.{dirty_detail}"
+                    ),
+                    command=f"rsync -a .{visible}/ {visible}/ && git rm -r .{visible}",
+                ))
+        elif target.exists():
+            stats = _tree_stats(target)
+            steps.append(MigrationStep(
+                title=f"Keep `{visible}/`",
+                action="keep",
+                status="manual" if dirty else "ok",
+                detail=f"Visible layer already exists with {stats['files']} files and {stats['dirs']} directories.{dirty_detail}",
+            ))
+        else:
+            steps.append(MigrationStep(
+                title=f"Create `{visible}/`",
+                action="create",
+                status="ready",
+                detail="Layer is absent. Full `contextkit init` creates project body directories and skeleton context files.",
+            ))
+    return steps
+
+
+def _bootstrap_steps(root: Path) -> list[MigrationStep]:
+    steps: list[MigrationStep] = []
+    required = {
+        ".contextkit/config.toml": root / CONFIG_REL,
+        ".contextkit/README.md": root / README_REL,
+        ".env.local": root / ".env.local",
+    }
+    for label, path in required.items():
+        if path.exists():
+            steps.append(MigrationStep(label, "keep", "ok", "Required bootstrap file already exists."))
+        else:
+            steps.append(MigrationStep(label, "create", "ready", "Missing required bootstrap file.", "contextkit adopt"))
+
+    settings = root / "capabilities" / "settings.json"
+    legacy_settings = root / ".capabilities" / "settings.json"
+    if settings.exists():
+        steps.append(MigrationStep("capabilities/settings.json", "keep", "ok", "Capability gate already exists."))
+    elif legacy_settings.exists():
+        steps.append(MigrationStep(
+            "capabilities/settings.json",
+            "move",
+            "ready",
+            "Capability gate exists under `.capabilities/` and will move with the visible layer migration.",
+            "git mv .capabilities capabilities",
+        ))
+    else:
+        steps.append(MigrationStep("capabilities/settings.json", "create", "ready", "Missing capability gate file.", "contextkit adopt"))
+
+    patterns = _gitignore_patterns(root)
+    missing = [line for line in REQUIRED_GITIGNORE_LINES if line not in patterns]
+    if not (root / ".gitignore").exists():
+        steps.append(MigrationStep(".gitignore", "create", "ready", "Missing .gitignore with ContextKit local/generated guards.", "contextkit adopt"))
+    elif missing:
+        steps.append(MigrationStep(
+            ".gitignore guards",
+            "update",
+            "ready",
+            "Missing guards: " + ", ".join(f"`{line}`" for line in missing),
+            "contextkit adopt",
+        ))
+    else:
+        steps.append(MigrationStep(".gitignore guards", "keep", "ok", "All ContextKit local/generated guards are present."))
+    return steps
+
+
+def _file_contains(path: Path, needle: str) -> bool:
+    try:
+        return needle in path.read_text()
+    except OSError:
+        return False
+
+
+def _host_steps(root: Path) -> list[MigrationStep]:
+    steps: list[MigrationStep] = []
+    codex_build = root / ".codex" / "hooks" / "build-context.sh"
+    if codex_build.exists():
+        if _file_contains(codex_build, "contextkit build --target codex"):
+            steps.append(MigrationStep("Codex build adapter", "keep", "ok", "`build-context.sh` already calls ContextKit."))
+        else:
+            steps.append(MigrationStep(
+                "Codex build adapter",
+                "replace",
+                "ready",
+                "Existing `.codex/hooks/build-context.sh` is a project-local compiler; ContextKit should own this adapter.",
+                "contextkit install-hooks --target codex",
+            ))
+    else:
+        steps.append(MigrationStep(
+            "Codex build adapter",
+            "create",
+            "ready",
+            "No Codex ContextKit adapter found.",
+            "contextkit install-hooks --target codex",
+        ))
+
+    codex_hooks = root / ".codex" / "hooks.json"
+    if codex_hooks.exists():
+        if _file_contains(codex_hooks, ".codex/hooks/build-context.sh"):
+            steps.append(MigrationStep("Codex SessionStart hook", "keep", "ok", "`hooks.json` already calls the build adapter."))
+        else:
+            steps.append(MigrationStep("Codex SessionStart hook", "update", "ready", "`hooks.json` does not call the ContextKit build adapter.", "contextkit install-hooks --target codex"))
+    else:
+        steps.append(MigrationStep("Codex SessionStart hook", "create", "ready", "No Codex hook file found.", "contextkit install-hooks --target codex"))
+
+    codex_config = root / ".codex" / "config.toml"
+    if codex_config.exists() and _file_contains(codex_config, ".codex/generated/context.md"):
+        steps.append(MigrationStep("Codex fallback config", "keep", "ok", "Codex fallback reads `.codex/generated/context.md`."))
+    else:
+        steps.append(MigrationStep("Codex fallback config", "update", "ready", "Codex fallback should include `.codex/generated/context.md`.", "contextkit install-hooks --target codex"))
+
+    claude_settings = root / ".claude" / "settings.json"
+    if claude_settings.exists():
+        if _file_contains(claude_settings, "contextkit build --target claude"):
+            steps.append(MigrationStep("Claude SessionStart hook", "keep", "ok", "Claude hook already calls ContextKit."))
+        else:
+            steps.append(MigrationStep(
+                "Claude SessionStart hook",
+                "review",
+                "manual",
+                "Existing Claude hooks are present but do not call ContextKit; review before replacing or augmenting them.",
+                "contextkit install-hooks --target claude",
+            ))
+    else:
+        steps.append(MigrationStep("Claude SessionStart hook", "create", "ready", "No Claude settings hook found.", "contextkit install-hooks --target claude"))
+
+    for rel in (".codex/generated/context.md", ".claude/rules/CONTEXT.md"):
+        path = root / rel
+        if path.exists():
+            steps.append(MigrationStep(rel, "regenerate", "ready", "Generated output exists and should be rebuilt after migration.", "contextkit build --target all"))
+        else:
+            steps.append(MigrationStep(rel, "create", "ready", "Generated output will be created by the ContextKit compiler.", "contextkit build --target all"))
+    return steps
+
+
+def _instruction_file_steps(root: Path) -> list[MigrationStep]:
+    steps: list[MigrationStep] = []
+    for rel in ("CLAUDE.md", "AGENTS.md"):
+        path = root / rel
+        if path.exists():
+            steps.append(MigrationStep(
+                rel,
+                "review",
+                "manual",
+                "Root instruction file exists. Delete only if it duplicates compiled ContextKit output.",
+            ))
+    if not steps:
+        steps.append(MigrationStep("Root instruction files", "keep", "ok", "No root `CLAUDE.md` or `AGENTS.md` found."))
+    return steps
+
+
+def _migration_plan(root: Path) -> dict[str, Any]:
+    sections = {
+        "Project body layers": _visible_layer_steps(root),
+        "Bootstrap files": _bootstrap_steps(root),
+        "Host bindings": _host_steps(root),
+        "Instruction files": _instruction_file_steps(root),
+    }
+    all_steps = [step for steps in sections.values() for step in steps]
+    blockers = [step for step in all_steps if step.status == "blocked"]
+    manual = [step for step in all_steps if step.status == "manual"]
+    ready = [step for step in all_steps if step.status == "ready"]
+    return {
+        "project": str(root),
+        "git": _git_state(root),
+        "summary": {
+            "ok": len(blockers) == 0,
+            "ready": len(ready),
+            "manual": len(manual),
+            "blocked": len(blockers),
+        },
+        "sections": {
+            name: [step.as_dict() for step in steps]
+            for name, steps in sections.items()
+        },
+    }
+
+
+def _format_migration_plan(plan: dict[str, Any]) -> str:
+    lines = ["# ContextKit Migration Plan", "", f"Project: `{plan['project']}`", ""]
+    summary = plan["summary"]
+    git = plan["git"]
+    lines += [
+        "Summary:",
+        "",
+        f"- Git present: {git.get('present')}",
+        f"- Git dirty: {git.get('dirty')}",
+        f"- Ready steps: {summary['ready']}",
+        f"- Manual review steps: {summary['manual']}",
+        f"- Blocked steps: {summary['blocked']}",
+        "",
+    ]
+    for section, steps in plan["sections"].items():
+        lines += [f"## {section}", ""]
+        for step in steps:
+            status = step["status"]
+            lines += [
+                f"### {step['title']}",
+                "",
+                f"- Action: `{step['action']}`",
+                f"- Status: `{status}`",
+                f"- Detail: {step['detail']}",
+            ]
+            if step.get("command"):
+                lines.append(f"- Command: `{step['command']}`")
+            lines.append("")
+    lines += [
+        "## Verification After Migration",
+        "",
+        "1. `contextkit doctor`",
+        "2. `contextkit build --target all`",
+        "3. `contextkit audit`",
+        "4. Review generated `.codex/generated/context.md` and `.claude/rules/CONTEXT.md` before removing old project-local compilers.",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def cmd_migrate(args: argparse.Namespace) -> None:
     root = _find_project_root()
     if args.apply:
         _require_git_for_mutation(root)
         _die("contextkit migrate --apply is not implemented in v0; use --plan first", 6)
-    candidates = [
-        "CLAUDE.md", "AGENTS.md", ".claude/rules", ".codex/generated/context.md",
-        ".codex/hooks/build-context.sh", "assets", "routines", "capabilities", "context",
-        ".assets", ".routines", ".capabilities", ".context",
-    ]
-    lines = ["# ContextKit Migration Plan", "", f"Project: `{root}`", "", "Detected surfaces:", ""]
-    for rel in candidates:
-        path = root / rel
-        if path.exists():
-            kind = "directory" if path.is_dir() else "file"
-            lines.append(f"- `{rel}` ({kind})")
-    lines += [
-        "",
-        "Suggested path:",
-        "",
-        "1. Run `contextkit init --binding-only` to add `.contextkit/` without replacing the project body.",
-        "2. Move durable live facts into `context/` files with front matter.",
-        "3. Preserve historical material under `assets/`.",
-        "4. Run `contextkit build --target all` and compare generated host context.",
-        "5. Replace local host compilers with `contextkit install-hooks` after review.",
-        "6. For legacy projects, rename `.context`/`.assets`/`.routines`/`.capabilities` to their visible forms before building.",
-        "",
-        "Deletion of root host instruction files is intentionally manual in v0.",
-    ]
-    _emit("\n".join(lines) + "\n")
+    plan = _migration_plan(root)
+    if args.json:
+        _emit(plan, True)
+    else:
+        _emit(_format_migration_plan(plan))
 
 
 GUIDES = {
@@ -1297,6 +1604,7 @@ def build_parser() -> argparse.ArgumentParser:
     group = p.add_mutually_exclusive_group(required=True)
     group.add_argument("--plan", action="store_true")
     group.add_argument("--apply", action="store_true")
+    p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_migrate)
 
     p = sub.add_parser("guide")

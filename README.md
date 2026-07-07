@@ -38,6 +38,8 @@ For local development, run the checked-out script directly:
 
 ```sh
 contextkit init
+contextkit adopt
+contextkit migrate --plan
 contextkit install-hooks --target codex --target claude
 contextkit build --target all
 contextkit doctor
@@ -45,6 +47,10 @@ contextkit audit
 contextkit audit --write
 contextkit guide authoring
 ```
+
+Use `contextkit init` for a new agent project. Use `contextkit migrate --plan`
+and `contextkit adopt` for an existing repository; adopt adds the technical
+binding and bootstrap files without creating body folders over legacy material.
 
 ## Project Shape
 
