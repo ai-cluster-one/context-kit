@@ -3,8 +3,8 @@
 ContextKit turns a Git repository into an agent-ready project.
 
 It gives agents a stable project body: live context, supporting evidence,
-repeatable routines, optional tool metadata, and generated runtime context for
-hosts such as Codex and Claude.
+repeatable routines, tool metadata when tools are enabled, and generated runtime
+context for hosts such as Codex and Claude.
 
 Use ContextKit when multiple agents, hosts, or sessions need the same source of
 truth for how a project works and how agent context is delivered.
@@ -17,7 +17,7 @@ truth for how a project works and how agent context is delivered.
 - on-demand guides for authoring, validation, audits, routines, assets,
   migration, hooks, and destructive operations;
 - advisory audits that point to the rule source for each finding;
-- generated files that can be rebuilt from source instead of edited by hand.
+- generated runtime context rebuilt from source, never edited by hand.
 
 ## Quick Start
 
