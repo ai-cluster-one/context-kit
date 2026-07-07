@@ -1,7 +1,7 @@
 # Capabilities Guide
 
-Use this guide when deciding what ContextKit owns about capabilities and what it
-must leave to the capabilities manager/repo.
+Capability boundary for ContextKit: what ContextKit indexes, what remains in the
+capabilities manager/repo.
 
 Capabilities are external tools. ContextKit does not turn them into ContextKit
 doctrine. ContextKit only surfaces the enabled capability set as one layer of the
@@ -62,7 +62,7 @@ Readiness is proven by `<name> doctor`, not by a prose claim in context.
 ## Policy Gates
 
 Exit 4 is policy, not a crash. It means the action is blocked by a project gate
-or a read-only connection. The agent should ask the user and should not enable a
+or a read-only connection. The agent asks the user. The agent does not enable a
 capability, change a connection, or lift write permission by itself.
 
 ## Project Envelopes

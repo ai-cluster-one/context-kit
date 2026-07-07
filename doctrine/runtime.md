@@ -5,10 +5,23 @@ repository structure, the live doctrine that explains how to act, the supporting
 evidence, the repeatable procedures, the enabled tool envelopes, and the host
 bindings that compile all of that into runtime context.
 
-This file is always-on. It is deliberately compact enough to carry in every
-session, but strong enough to stabilize the agent before any project-specific
-file is opened. Detailed authoring and repair mechanics live in on-demand
-guides; load them when the trigger applies.
+Always-on context stays compact: orientation, law, routing, safety. Detailed
+authoring and repair mechanics live in on-demand guides.
+
+## Mechanism Model
+
+Verbs run mechanisms. Guides hold rules.
+
+`contextkit audit`, `contextkit groom`, `contextkit migrate`, and
+`contextkit build` produce mechanical output. The output names rule sources.
+Rule sources are guides. Repairs change source files, never generated output.
+
+Flow:
+
+1. Run the verb.
+2. Load the named rule-source guide.
+3. Apply the guide to the source file or layer.
+4. Rerun the verb.
 
 ## Operating Constitution
 
@@ -74,52 +87,26 @@ does not hold live project doctrine.
 
 ### `context/`
 
-`context/` is the live source of truth for current project doctrine. Every
-Markdown file needs front matter:
-
-```yaml
----
-title: Human title
-description: Specific one-line routing description.
-load: inline|stub
-order: 100
----
-```
-
-`load: inline` means the full body is always compiled into generated context.
-Reserve it for compact, session-critical law. `load: stub` means only title,
-path, and description are compiled; the agent loads the file when the task calls
-for it.
-
-Descriptions are routing surfaces. A good description lets the agent decide when
-to load the file without opening it.
+`context/` is the live source of truth for current project doctrine. Load
+`contextkit guide authoring` before creating, moving, or judging context files.
 
 ### `assets/`
 
-`assets/` holds supporting material: session notes, plans, research, evidence,
-snapshots, and other historical or exploratory records. Assets do not become
-live just because they are detailed. Promote durable facts from assets into the
-owning live layer, then leave the asset as evidence.
-
-ContextKit's own written audit reports live under `.contextkit/audits/`, not
-under `assets/`.
+`assets/` holds supporting evidence and historical material. Load
+`contextkit guide assets` before creating, judging, or promoting asset content.
+ContextKit's own written audit reports live under `.contextkit/audits/`.
 
 ### `routines/`
 
-`routines/` holds repeatable procedures. A routine tells the agent when to run a
-procedure and the ordered work to perform. It does not own durable doctrine,
-identifier maps, capability contracts, or service-specific readiness claims.
+`routines/` holds repeatable procedures. Load `contextkit guide routines` before
+creating, judging, or repairing routines.
 
 ### `capabilities/`
 
 `capabilities/` is the project envelope layer for enabled external tools.
-ContextKit indexes enabled capability awareness into generated context, but it
-does not define capability creation, validation, audit, release, credentials, or
-connection doctrine. Those belong to the capabilities manager and the capability
-repo.
-
-Exit 4 from a capability is policy: a disabled capability or a read-only
-connection. Ask the user; do not lift a gate yourself.
+ContextKit indexes enabled capability awareness into generated context. Load
+`contextkit guide capabilities` for the ContextKit boundary, then use the
+capabilities manager or capability-owned guide for capability internals.
 
 ## On-Demand Guides
 
@@ -133,7 +120,7 @@ Load a guide when its trigger applies:
   before committing or after migration.
 - `contextkit guide audit` - judging existing context and planning repairs.
 - `contextkit guide assets` - deciding whether material belongs in `assets/` or
-  should be promoted into live doctrine.
+  promotes into live doctrine.
 - `contextkit guide routines` - creating or revising repeatable procedures.
 - `contextkit guide capabilities` - understanding the ContextKit/capability
   boundary.

@@ -1,10 +1,11 @@
 # Migration Guide
 
-Use this guide when converting an existing project, especially one with legacy
-dot body folders, host-specific instruction files, or scattered project memory.
+Migration converts existing projects into ContextKit agent bodies, especially
+repos with legacy dot body folders, host-specific instruction files, or scattered
+project memory.
 
-Migration is a classification exercise before it is a file move. Preserve
-evidence, promote durable facts, and remove duplicated live truth.
+Migration starts with classification, then file moves. Layer guides contain the
+destination rules.
 
 ## Start With A Plan
 
@@ -18,17 +19,20 @@ output.
 
 ## Classification Pass
 
-For each existing file or paragraph, choose one home:
+For each existing file or paragraph, choose the destination by loading the guide
+that owns the candidate layer:
 
-- current durable doctrine -> `context/`;
-- historical evidence, notes, plans, research -> `assets/`;
-- repeatable ordered procedure -> `routines/`;
-- project-side tool envelope -> `capabilities/`;
-- generated host output -> delete/regenerate, do not preserve as source;
-- secrets/local configuration -> local env or credential store, not git.
+| Candidate destination | Rule source |
+| --- | --- |
+| `context/` | `contextkit guide authoring` |
+| `assets/` | `contextkit guide assets` |
+| `routines/` | `contextkit guide routines` |
+| `capabilities/` | `contextkit guide capabilities`, then capability-owned docs |
+| generated host output | `contextkit guide hooks` |
+| local secrets/config | `contextkit guide bootstrap` and the owning tool docs |
 
 If a fact appears in several places, pick the owner and remove the rest or turn
-them into role pointers.
+them into role pointers according to the owning guide.
 
 ## Legacy Dot Folders
 
@@ -56,11 +60,11 @@ project's evidence or current doctrine.
 ## Host Instruction Files
 
 Root files like `CLAUDE.md`, `AGENTS.md`, or hand-authored rules may contain
-valuable doctrine, but they should not remain a second source of truth once
-ContextKit owns generated runtime context.
+valuable doctrine. They do not remain a second source of truth once ContextKit
+owns generated runtime context.
 
-Move durable content into `context/`, procedures into `routines/`, and evidence
-into `assets/`. Then let ContextKit generate host context.
+Classify their content with the guide routing table above. Then let ContextKit
+generate host context.
 
 ## Verification
 

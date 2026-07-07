@@ -1,13 +1,10 @@
 # ContextKit Authoring Guide
 
-Use this guide before creating or substantially editing any agent-directing
-Markdown: `context/**/*.md`, `routines/**/*.md`, supporting `assets/**/*.md`, or
-host instruction files that will be replaced by ContextKit output.
+Live context authoring under `context/`; project-body owner selection for
+durable facts.
 
-The goal is not to make more documentation. The goal is to give each durable
-piece of knowledge one correct home, at the correct altitude, with enough routing
-metadata that an agent can find it without carrying the whole project in every
-session.
+Durable knowledge has one correct home, at the correct altitude, with enough
+routing metadata for generated context to find it.
 
 ## The Placement Decision
 
@@ -15,19 +12,23 @@ Before writing, classify the material:
 
 - **Current law, identity, architecture, constraints, or stable project model**:
   write it under `context/`.
-- **Repeatable ordered work**: write it under `routines/`.
+- **Repeatable ordered work**: write it under `routines/`, then load
+  `contextkit guide routines`.
 - **Historical evidence, research, plans, raw notes, session records, or
-  snapshots**: write it under `assets/`.
+  snapshots**: write it under `assets/`, then load `contextkit guide assets`.
 - **Enabled tool envelopes, identifiers, connection metadata, and capability
   references**: keep them under `capabilities/`, following the capability
-  manager's own doctrine.
+  manager's own doctrine; load `contextkit guide capabilities` for the
+  ContextKit boundary.
 - **ContextKit native reports**: keep them under `.contextkit/`, especially
   `.contextkit/audits/`.
 - **Generated host context**: never write it by hand.
 
-Use the differentiator: if the material must be true for future sessions, it is
-live doctrine. If it explains how a past conclusion was reached, it is evidence.
-If it tells the agent how to perform a recurring procedure, it is a routine.
+Placement test:
+
+- True for future sessions: live doctrine.
+- Evidence for a past conclusion: asset.
+- Recurring ordered work: routine.
 
 ## `context/` Taxonomy
 
@@ -43,9 +44,9 @@ Use these default homes:
 - `context/architecture/` - runtime shape, services, data flow, deployment
   model, integration boundaries, host surfaces.
 
-Add domain folders only when the default homes would become muddy. Examples:
+Add domain folders only when the default homes become muddy. Examples:
 `context/product/`, `context/accounting/`, `context/operations/`,
-`context/editorial/`. A folder name should be the domain, not the current task.
+`context/editorial/`. A folder name is the domain, not the current task.
 
 Do not create a folder for one orphan note. Put the note in the nearest existing
 home; split later when the shape earns it.
@@ -66,7 +67,7 @@ order: 100
 Fields:
 
 - `title`: human-readable label used in generated context.
-- `description`: one line that answers "when should the agent load this file?"
+- `description`: one line that answers "when the agent loads this file."
   It is routing metadata, not a subtitle.
 - `load`: `inline` or `stub`.
 - `order`: numeric sorting key. Files sort by `order`, then path.
@@ -166,7 +167,7 @@ A good context body:
 - promotes conclusions from assets without rewriting the evidence;
 - separates law from procedure.
 
-A context body should not:
+Exclude from context bodies:
 
 - store open task lists, balances, checkpoints, or session state;
 - point at `assets/` as if assets are live doctrine;
@@ -239,32 +240,9 @@ This file owns the live billing-domain vocabulary and state model.
 State the current model. Do not include historical migrations or raw research.
 ```
 
-Routine file:
-
-```markdown
----
-name: month-end-close
-description: Run when closing a reporting month and reconciling project-owned accounting outputs.
----
-
-# Month-End Close
-
-This routine owns the ordered close procedure. It applies the accounting model by
-role; it does not restate ids, mappings, or capability command contracts.
-```
-
-Asset record:
-
-```markdown
-# 2026-07-07 Billing Provider Research
-
-Purpose: capture evidence gathered while choosing the billing integration model.
-
-## Findings
-
-Record sources, observations, and uncertainty. Promote durable conclusions into
-the owning `context/` file after review.
-```
+For routine templates, load `contextkit guide routines`. For asset templates,
+load `contextkit guide assets`. This guide routes to those homes but does not
+own their file contracts.
 
 ## Authoring Procedure
 
@@ -272,11 +250,12 @@ the owning `context/` file after review.
 2. Search the project for an existing owner with `rg`.
 3. Choose the layer: `context/`, `assets/`, `routines/`, `capabilities/`, or
    `.contextkit/`.
-4. If writing `context/`, choose folder, filename, `load`, and `order`.
-5. Write only the facts this file owns.
-6. Remove or rewrite duplicates instead of adding a parallel truth.
-7. Run `contextkit build --target all`.
-8. Run `contextkit audit` or `contextkit audit-file <path>`.
+4. Load the guide that owns that layer.
+5. If writing `context/`, choose folder, filename, `load`, and `order`.
+6. Write only the facts this file owns.
+7. Remove or rewrite duplicates instead of adding a parallel truth.
+8. Run `contextkit build --target all`.
+9. Run `contextkit audit` or `contextkit audit-file <path>`.
 
 ## Quality Bar
 
@@ -286,7 +265,5 @@ A new or edited file is good when:
 - the file owns a clear domain and does not leak into neighboring domains;
 - every durable fact has one home;
 - always-on text is small enough to justify its per-session cost;
-- assets remain evidence, not hidden doctrine;
-- routines describe repeatable work without duplicating live models;
-- capability-specific doctrine remains in the capability layer;
+- asset, routine, and capability details were judged by their owning guides;
 - `contextkit audit` is clean or every remaining warning is deliberate.

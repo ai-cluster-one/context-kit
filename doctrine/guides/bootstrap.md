@@ -1,7 +1,6 @@
 # Bootstrap Guide
 
-Use this guide when creating a new ContextKit project body or adopting an
-existing repository.
+Bootstrap creates a new ContextKit project body or adopts an existing repository.
 
 Bootstrap has two jobs:
 

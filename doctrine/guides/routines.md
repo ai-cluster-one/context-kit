@@ -1,10 +1,9 @@
 # Routines Guide
 
-Use this guide when creating or revising repeatable work under `routines/`.
+Routine authoring under `routines/`.
 
-A routine is a procedure the agent should run more than once. It is earned when
-the work has a stable trigger, a stable outcome, and enough sequencing that
-re-deriving it each time creates waste or risk.
+A routine is a repeatable procedure with a stable trigger, stable outcome, and
+enough sequencing that re-deriving it creates waste or risk.
 
 ## When To Create A Routine
 
@@ -36,7 +35,7 @@ description: Specific one-line trigger and outcome.
 ---
 ```
 
-The filename stem should match `name`:
+The filename stem equals `name`:
 
 ```text
 routines/month-end-close.md
@@ -76,7 +75,7 @@ domain names for ordinary procedures (`release-check.md`, `month-end-close.md`).
 
 Open with the trigger, the scope boundary, and the definition of done.
 
-A routine should include:
+Routine body includes:
 
 - when to run it;
 - inputs or substrate it expects;
@@ -87,7 +86,7 @@ A routine should include:
 - expected final state;
 - which context or capability surfaces to load by role.
 
-A routine should not include:
+Routine body excludes:
 
 - durable domain models that belong in `context/`;
 - raw evidence that belongs in `assets/`;
@@ -114,8 +113,8 @@ A processor routine works one item. It states:
 - result;
 - refusal/escalation path when the item cannot be handled safely.
 
-The processor should not know more about the producer than necessary. It works
-the item it was given.
+The processor knows only the item substrate plus the recipe. It works the item
+it was given.
 
 ## Relationship To Context And Capabilities
 
@@ -135,5 +134,5 @@ contextkit build --target all
 contextkit audit
 ```
 
-Then review the generated routine index. The description should be enough for an
-agent to decide when to load the routine.
+Then review the generated routine index. The description gives the agent enough
+routing signal to load the routine.

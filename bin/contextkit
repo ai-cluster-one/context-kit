@@ -100,6 +100,7 @@ class Finding:
     path: str
     message: str
     hint: str = ""
+    rule_source: str = ""
 
     def as_dict(self) -> dict[str, str]:
         out = {
@@ -108,6 +109,8 @@ class Finding:
             "path": self.path,
             "message": self.message,
         }
+        if self.rule_source:
+            out["rule_source"] = self.rule_source
         if self.hint:
             out["hint"] = self.hint
         return out
@@ -398,7 +401,7 @@ Context manager: `{CONFIG_REL.as_posix()}`
 Rebuild: `contextkit build --target {target}`
 Doctor: `contextkit doctor`
 Help: `contextkit help`
-Guides: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide assets`; `contextkit guide routines`; `contextkit guide audit`; `contextkit guide destructive`; `contextkit guide capabilities`
+Rule sources: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide assets`; `contextkit guide routines`; `contextkit guide audit`; `contextkit guide destructive`; `contextkit guide capabilities`
 """
 
 
@@ -704,11 +707,11 @@ SKELETON_FILES = {
     ),
     "context/identity/AGENT.md": _context_file(
         "Agent", "The agent identity, voice, operating posture, and boundaries.", "inline", 20,
-        "Describe who the agent is inside this project and how it should appear while operating.",
+        "Describe who the agent is inside this project, including voice and operating posture.",
     ),
     "context/identity/OWNER.md": _context_file(
         "Owner", "The owner or supervisor relationship and command authority.", "inline", 30,
-        "Name the owner role, supervision model, and when the agent should ask for direction.",
+        "Name the owner role, supervision model, and escalation triggers.",
     ),
     "context/identity/PEOPLE.md": _context_file(
         "People", "Project people, roles, authority, and durable communication facts.", "stub", 40,
@@ -1022,6 +1025,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "type": cfg["type"],
         "ok": not problems,
         "problems": problems,
+        "rule_sources": ["contextkit guide validation", "contextkit guide bootstrap"],
         "git": _git_state(root),
         "required_files": required_files,
         "gitignore_guards": gitignore_guards,
@@ -1043,6 +1047,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         _emit(report, True)
         return
     lines = ["# ContextKit Doctor", "", f"Project: `{root}`", f"Type: `{cfg['type']}`", f"Status: {'ok' if report['ok'] else 'needs attention'}", ""]
+    lines += ["Rule sources:", "- `contextkit guide validation`", "- `contextkit guide bootstrap`", ""]
     if problems:
         lines += ["Problems:", *[f"- {problem}" for problem in problems], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
@@ -1056,7 +1061,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         lines.append(f"- `{pattern}`: {marker}")
     if report["legacy_dot_layers"]:
         lines += ["", "Legacy dot layers:"]
-        lines += [f"- `{rel}` should be renamed to `{rel[1:]}`" for rel in report["legacy_dot_layers"]]
+        lines += [f"- `{rel}` -> `{rel[1:]}`" for rel in report["legacy_dot_layers"]]
     lines.append("")
     lines += ["Layers:"]
     for name, item in report["layers"].items():
@@ -1101,7 +1106,7 @@ def _historical_framing_hint(text: str) -> str | None:
 
 def _running_state_hint(text: str) -> str | None:
     if re.search(r"\b(todo|pending|next action|checkpoint|last sync(?:ed)?|current balance|open task)\b", text, flags=re.I):
-        return "Live context should not hold running task state; move work tracking to the project work system or assets."
+        return "Live context excludes running task state; move work tracking to the project work system or assets."
     return None
 
 
@@ -1129,7 +1134,10 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
         ctx, errors = _read_context_file(root, path)
         if errors:
             for err in errors:
-                findings.append(Finding("error", "metadata", _rel(root, path), err))
+                findings.append(Finding(
+                    "error", "metadata", _rel(root, path), err,
+                    rule_source="contextkit guide authoring",
+                ))
             continue
         if ctx:
             files.append(ctx)
@@ -1141,21 +1149,27 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
             findings.append(Finding(
                 "warning", "weak-description", rel,
                 "Description is too generic to route reliably.",
-                "Make it a specific one-line answer to: when should the agent load this file?",
+                "Make it a specific one-line answer to: when the agent loads this file.",
+                "contextkit guide authoring",
             ))
         if "\n" in item.description:
-            findings.append(Finding("warning", "description", rel, "Description should be one line."))
+            findings.append(Finding(
+                "warning", "description", rel, "Description is one line.",
+                rule_source="contextkit guide authoring",
+            ))
         if item.load == "inline" and (len(item.body.split()) > 1200 or len(item.body.splitlines()) > 180):
             findings.append(Finding(
                 "warning", "inline-bloat", rel,
                 "Inline file is large enough to deserve review.",
                 "Keep always-on context lean; move detail to a stub, routine, capability reference, or asset.",
+                "contextkit guide authoring",
             ))
         if re.search(r"\[[^\]]+\]\((?:\.\.?/)?[^)]+\.md(?:#[^)]+)?\)", item.body):
             findings.append(Finding(
                 "warning", "internal-context-link", rel,
                 "Markdown links to sibling context files create stale routing assumptions.",
                 "Prefer self-contained wording and let compiled metadata route sibling files.",
+                "contextkit guide authoring",
             ))
         asset_live_pattern = re.compile(
             r"(?:see|load|read|per|according to|based on|from)\s+`?(?:\.assets|assets)/(?:sessions|plans|research)/"
@@ -1167,16 +1181,23 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 "warning", "asset-as-live-doctrine", rel,
                 "File points at historical assets as if they are live doctrine.",
                 "Promote durable facts into the live owning layer; leave historical assets as evidence.",
+                "contextkit guide authoring; contextkit guide assets",
             ))
         hint = _content_owner_hint(rel, item.body)
         if hint:
-            findings.append(Finding("info", "taxonomy-fit", rel, "File may live at the wrong context altitude.", hint))
+            findings.append(Finding(
+                "info", "taxonomy-fit", rel,
+                "File may live at the wrong context altitude.",
+                hint,
+                "contextkit guide authoring",
+            ))
         hint = _historical_framing_hint(item.body)
         if hint:
             findings.append(Finding(
                 "warning", "historical-framing", rel,
                 "Live context appears to define itself through history or comparison.",
                 hint,
+                "contextkit guide authoring",
             ))
         hint = _running_state_hint(item.body)
         if hint:
@@ -1184,6 +1205,7 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 "warning", "running-state-in-context", rel,
                 "Live context appears to contain running task state.",
                 hint,
+                "contextkit guide authoring",
             ))
         for claim in _normalized_claims(item):
             claim_owners.setdefault(claim, []).append(rel)
@@ -1195,13 +1217,24 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 "warning", "duplicate-live-fact", ", ".join(unique),
                 f"Same durable-looking claim appears in {len(unique)} live files.",
                 claim[:220],
+                "contextkit guide authoring",
             ))
     return findings
 
 
 def _audit_report(root: Path, findings: list[Finding]) -> str:
     today = _dt.date.today().isoformat()
-    lines = [f"# ContextKit Audit - {today}", "", f"Project: `{root}`", "", "## Findings", ""]
+    lines = [
+        f"# ContextKit Audit - {today}",
+        "",
+        f"Project: `{root}`",
+        "",
+        "Audit procedure: `contextkit guide audit`",
+        "Apply each finding by loading its `Rule source` guide.",
+        "",
+        "## Findings",
+        "",
+    ]
     if not findings:
         lines.append("No findings.")
     else:
@@ -1210,6 +1243,7 @@ def _audit_report(root: Path, findings: list[Finding]) -> str:
                 f"### {finding.severity.upper()} `{finding.code}`",
                 "",
                 f"- Path: `{finding.path}`",
+                f"- Rule source: `{finding.rule_source or 'contextkit guide audit'}`",
                 f"- Finding: {finding.message}",
             ]
             if finding.hint:
@@ -1241,11 +1275,12 @@ def cmd_audit(args: argparse.Namespace) -> None:
     report = _audit_report(root, findings)
     if args.write:
         written = _write_audit(root, report)
-        result = {"project": str(root), "written": str(written),
+        result = {"project": str(root), "written": str(written), "rule_source": "contextkit guide audit",
                   "findings": [item.as_dict() for item in findings]}
         _emit(result, args.json)
     elif args.json:
-        _emit({"project": str(root), "findings": [item.as_dict() for item in findings]}, True)
+        _emit({"project": str(root), "rule_source": "contextkit guide audit",
+               "findings": [item.as_dict() for item in findings]}, True)
     else:
         _emit(report)
 
@@ -1257,7 +1292,8 @@ def cmd_audit_file(args: argparse.Namespace) -> None:
         path = root / path
     findings = _audit_context_files(root, [path])
     if args.json:
-        _emit({"project": str(root), "findings": [item.as_dict() for item in findings]}, True)
+        _emit({"project": str(root), "rule_source": "contextkit guide audit",
+               "findings": [item.as_dict() for item in findings]}, True)
     else:
         _emit(_audit_report(root, findings))
 
@@ -1282,12 +1318,10 @@ def cmd_groom(args: argparse.Namespace) -> None:
         lines.append("No audit findings to groom.")
     else:
         lines += [
-            "Review findings in this order:",
+            "Rule source:",
             "",
-            "1. Fix metadata errors that block compilation.",
-            "2. Remove duplicate live facts by choosing one owning file.",
-            "3. Improve weak routing descriptions.",
-            "4. Move large inline detail into stubs, routines, capabilities, or assets.",
+            "- Load `contextkit guide audit` for the audit walk.",
+            "- For each finding, load its `rule_source` guide and repair the owning source.",
             "",
             f"Current finding count: {len(findings)}",
         ]
@@ -1465,7 +1499,7 @@ def _host_steps(root: Path) -> list[MigrationStep]:
                 "Codex build adapter",
                 "replace",
                 "ready",
-                "Existing `.codex/hooks/build-context.sh` is a project-local compiler; ContextKit should own this adapter.",
+                "Existing `.codex/hooks/build-context.sh` is a project-local compiler; ContextKit owns this adapter.",
                 "contextkit install-hooks --target codex",
             ))
     else:
@@ -1490,7 +1524,7 @@ def _host_steps(root: Path) -> list[MigrationStep]:
     if codex_config.exists() and _file_contains(codex_config, ".codex/generated/context.md"):
         steps.append(MigrationStep("Codex fallback config", "keep", "ok", "Codex fallback reads `.codex/generated/context.md`."))
     else:
-        steps.append(MigrationStep("Codex fallback config", "update", "ready", "Codex fallback should include `.codex/generated/context.md`.", "contextkit install-hooks --target codex"))
+        steps.append(MigrationStep("Codex fallback config", "update", "ready", "Codex fallback includes `.codex/generated/context.md`.", "contextkit install-hooks --target codex"))
 
     claude_settings = root / ".claude" / "settings.json"
     if claude_settings.exists():
@@ -1510,7 +1544,7 @@ def _host_steps(root: Path) -> list[MigrationStep]:
     for rel in (".codex/generated/context.md", ".claude/rules/CONTEXT.md"):
         path = root / rel
         if path.exists():
-            steps.append(MigrationStep(rel, "regenerate", "ready", "Generated output exists and should be rebuilt after migration.", "contextkit build --target all"))
+            steps.append(MigrationStep(rel, "regenerate", "ready", "Generated output exists; rebuild after migration.", "contextkit build --target all"))
         else:
             steps.append(MigrationStep(rel, "create", "ready", "Generated output will be created by the ContextKit compiler.", "contextkit build --target all"))
     return steps
@@ -1552,6 +1586,7 @@ def _migration_plan(root: Path) -> dict[str, Any]:
             "manual": len(manual),
             "blocked": len(blockers),
         },
+        "rule_sources": ["contextkit guide migration"],
         "sections": {
             name: [step.as_dict() for step in steps]
             for name, steps in sections.items()
@@ -1564,6 +1599,10 @@ def _format_migration_plan(plan: dict[str, Any]) -> str:
     summary = plan["summary"]
     git = plan["git"]
     lines += [
+        "Rule source:",
+        "",
+        "- `contextkit guide migration`",
+        "",
         "Summary:",
         "",
         f"- Git present: {git.get('present')}",
@@ -1590,10 +1629,11 @@ def _format_migration_plan(plan: dict[str, Any]) -> str:
     lines += [
         "## Verification After Migration",
         "",
-        "1. `contextkit doctor`",
-        "2. `contextkit build --target all`",
-        "3. `contextkit audit`",
-        "4. Review generated `.codex/generated/context.md` and `.claude/rules/CONTEXT.md` before removing old project-local compilers.",
+        "1. Load `contextkit guide migration`.",
+        "2. Run `contextkit doctor`.",
+        "3. Run `contextkit build --target all`.",
+        "4. Run `contextkit audit` and follow its rule-source guide routing.",
+        "5. Review generated `.codex/generated/context.md` and `.claude/rules/CONTEXT.md` before removing old project-local compilers.",
         "",
     ]
     return "\n".join(lines)

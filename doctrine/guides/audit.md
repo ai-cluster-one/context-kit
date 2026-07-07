@@ -1,11 +1,9 @@
 # Audit Guide
 
-Use this guide when acting as an auditor of a ContextKit project body.
+Auditor entrypoint for a ContextKit project body.
 
-This guide owns the audit procedure: how to choose the rule source, how to walk
-the project body, how to classify findings, and how to report repairs. It does
-not own the authoring rules for each layer. The auditor loads the guide that owns
-the layer being judged, then applies that guide to the file in front of it.
+Audit procedure: choose the rule source, walk the project body, classify
+findings, report repairs. Layer rules live in layer guides.
 
 ## Commands
 
@@ -36,14 +34,12 @@ Before judging a file, load the rule source that owns that file type:
 If a finding depends on a rule from another guide, cite that guide as the rule
 source. Do not restate the rule as if the audit guide owns it.
 
-## Auditor Posture
+## Audit Walk
 
-An audit asks whether the project body can be trusted. The auditor is not trying
-to make the prose stylistically uniform; the auditor is checking whether the
-right source of truth owns each fact and whether generated runtime context can
-route an agent reliably.
+Audit target: trusted project body, single source of truth, reliable generated
+runtime routing.
 
-Work in this order:
+Order:
 
 1. Identify the surface being reviewed.
 2. Load the owning guide for that surface.
@@ -60,10 +56,10 @@ Use these severities:
    routing.
 2. **Warning** - the body likely contains drift, duplicate truth, wrong altitude,
    unsafe placement, or a rule-source violation.
-3. **Info** - a taxonomy or quality hint that requires judgment before changing.
+3. **Info** - taxonomy or quality hint for human review before changing.
 
-A quiet report is not the goal by itself. A coherent body is the goal. If a
-warning is deliberately accepted, record the reason where the exception lives.
+Coherent body over quiet report. Accepted warnings need a recorded reason where
+the exception lives.
 
 ## Manual Audit Pass
 
@@ -88,7 +84,7 @@ Then load the owning guide for that path before editing.
 
 ## Report Shape
 
-Each manual finding should state:
+Manual finding fields:
 
 - severity;
 - affected path;
@@ -96,7 +92,7 @@ Each manual finding should state:
 - observed problem;
 - owning source to edit;
 - recommended repair;
-- whether the repair is mechanical or requires user judgment.
+- repair mode: mechanical or user review.
 
 When a finding crosses layers, name both sides. Example: a routine duplicated a
 domain model owned by a context file. The routine guide owns the procedural rule;

@@ -1,7 +1,7 @@
 # Validation Guide
 
-Use validation after initialization, migration, hook changes, or any meaningful
-edit to `context/`, `assets/`, `routines/`, or `capabilities/`.
+Validation follows initialization, migration, hook changes, and meaningful edits
+to `context/`, `assets/`, `routines/`, or `capabilities/`.
 
 Validation has three layers:
 
@@ -23,7 +23,7 @@ body. It validates:
 - `.env.local` presence;
 - visible body layers: `context/`, `assets/`, `routines/`, `capabilities/`;
 - `capabilities/settings.json`;
-- legacy dot body folders that should be renamed;
+- legacy dot body folders marked for rename;
 - target output paths for Codex and Claude.
 
 `doctor` does not validate the internals of a capability. It only confirms that
@@ -61,7 +61,7 @@ apply the guide named by `contextkit guide audit` for that path.
 
 ## Human Review Checklist
 
-The machine checks are the floor. A human or agent review should also ask:
+The machine checks are the floor. Human or agent review asks:
 
 - Which guide owns the layer being reviewed?
 - Did the reviewer load that guide before judging the file?

@@ -1,8 +1,7 @@
 # Assets Guide
 
-Use this guide when deciding whether material belongs in `assets/`, when
-recording research or session evidence, or when promoting an asset conclusion
-into live context.
+Asset authoring, evidence records, research notes, session records, and
+promotion from evidence into live context.
 
 `assets/` is the evidence layer. It preserves how the project learned something,
 what was considered, what was tried, and what raw material supports a decision.
@@ -33,7 +32,7 @@ Do not use `assets/` for:
   treat as true;
 - repeatable procedures;
 - capability command contracts, schemas, readiness claims, or credential rules;
-- open work queues that should live in the project's work system;
+- open work queues that belong in the project's work system;
 - secrets or filled local configuration.
 
 If an asset contains a durable conclusion, promote that conclusion into the
@@ -60,8 +59,8 @@ assets/research/billing-provider-comparison.md
 
 ## Asset Body Shape
 
-An asset should explain why it exists, what evidence it contains, and what should
-be promoted if it becomes durable.
+An asset explains why it exists, what evidence it contains, and what promotes
+when it becomes durable.
 
 Recommended shape:
 
@@ -80,7 +79,7 @@ Raw findings, source notes, observations, logs, or links.
 
 ## Durable Conclusions
 
-Facts that were promoted, or should be promoted, into live context.
+Facts promoted, or ready to promote, into live context.
 
 ## Open Questions
 
@@ -98,8 +97,8 @@ Promotion is a deliberate act:
 5. Do not keep two live copies.
 6. Run `contextkit audit`.
 
-The live file may mention the asset only when provenance matters. It should not
-depend on the asset for everyday routing.
+The live file mentions the asset only when provenance matters. The live file
+does not depend on the asset for everyday routing.
 
 ## Quality Bar
 

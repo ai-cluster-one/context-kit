@@ -1,9 +1,9 @@
 # Hooks Guide
 
-Use this guide when installing or changing host bindings.
+Host bindings deliver generated ContextKit output to agent runtimes.
 
-Hooks are delivery mechanisms. They should be thin adapters that call
-`contextkit build`, not places where project doctrine is written.
+Hooks are delivery mechanisms. A hook is a thin adapter that calls
+`contextkit build`. Project doctrine lives in source files.
 
 ## Codex
 

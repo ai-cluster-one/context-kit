@@ -45,6 +45,9 @@ each host. Detailed authoring, validation, audit, assets, routines, capabilities
 migration, hooks, and destructive-operation rules are served on demand through
 `contextkit guide <topic>`.
 
+ContextKit verbs are mechanisms. Guides are rule sources. Commands produce
+mechanical output. Output names rule sources. Repairs use the named guide.
+
 ## Core Commands
 
 ```sh

@@ -1,8 +1,8 @@
 # Destructive Operations Guide
 
-Use this guide before running any operation that can erase, overwrite, or
-irreversibly mutate project data, especially database reset commands hidden
-inside wrappers such as Docker, SSH, CI, Railway, or a remote shell.
+Destructive operations erase, overwrite, or irreversibly mutate project data.
+Database reset commands remain destructive inside wrappers such as Docker, SSH,
+CI, Railway, or a remote shell.
 
 ## Exact Authorization Required
 
