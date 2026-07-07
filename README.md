@@ -17,7 +17,6 @@ truth for how a project works and how agent context is delivered.
 - on-demand guides for authoring, validation, audits, routines, assets,
   migration, hooks, and destructive operations;
 - advisory audits that point to the rule source for each finding;
-- a migration path for projects with legacy dot-folder context;
 - generated files that can be rebuilt from source instead of edited by hand.
 
 ## Quick Start
