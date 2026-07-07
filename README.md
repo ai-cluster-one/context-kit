@@ -45,12 +45,15 @@ contextkit build --target all
 contextkit doctor
 contextkit audit
 contextkit audit --write
+contextkit guide bootstrap
 contextkit guide authoring
 ```
 
 Use `contextkit init` for a new agent project. Use `contextkit migrate --plan`
 and `contextkit adopt` for an existing repository; adopt adds the technical
 binding and bootstrap files without creating body folders over legacy material.
+Run `contextkit guide bootstrap` for the exact new-project and migration
+sequences, including how Codex and Claude receive generated context.
 
 ## Project Shape
 
