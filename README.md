@@ -1,32 +1,50 @@
 # ContextKit
 
-ContextKit is a standalone manager for repo-backed agent project bodies. It
-standardizes the visible project structure, durable context, runtime context
-compilation, host bindings, routines, capabilities, audits, migrations, and the
-operating doctrine that makes an agent work coherently from a repository.
+ContextKit turns a Git repository into an agent-ready project.
 
-ContextKit is deliberately higher-rank than a normal capability. Capabilities
-remain separate tools; ContextKit discovers and indexes them as one layer of the
-agent body. Capability creation, validation, audit, and release doctrine live in
-the capabilities manager/repo, not in ContextKit.
+It gives agents a stable project body: live context, supporting evidence,
+repeatable routines, optional tool metadata, and generated runtime context for
+hosts such as Codex and Claude.
 
-## What It Manages
+Use ContextKit when multiple agents, hosts, or sessions need the same source of
+truth for how a project works and how agent context is delivered.
 
-An agent body is the repository shape that lets an agent operate consistently
-across workers and hosts:
+## What You Get
 
-- `context/` - live doctrine and routing surface;
-- `assets/` - historical evidence, plans, research, and supporting
-  material;
-- `routines/` - repeatable procedures surfaced into runtime context;
-- `capabilities/` - project envelopes for installed tools;
-- `.contextkit/` - the technical binding, config, and manager-facing marker;
-- `.codex/` and `.claude/` outputs/hooks - generated host runtime context.
+- a visible project structure for agent context;
+- generated runtime context for Codex and Claude;
+- always-on operating doctrine loaded from ContextKit;
+- on-demand guides for authoring, validation, audits, routines, assets,
+  migration, hooks, and destructive operations;
+- advisory audits that point to the rule source for each finding;
+- a migration path for projects with legacy dot-folder context;
+- generated files that can be rebuilt from source instead of edited by hand.
 
-## Install
+## Quick Start
+
+Install:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/ai-cluster-one/context-kit/main/install.sh | sh
+```
+
+Create a new agent project:
+
+```sh
+git init
+contextkit init
+contextkit install-hooks --target codex --target claude
+contextkit build --target all
+contextkit doctor
+contextkit audit
+```
+
+Adopt an existing repository:
+
+```sh
+contextkit migrate --plan
+contextkit adopt
+contextkit guide bootstrap
 ```
 
 For local development, run the checked-out script directly:
@@ -35,43 +53,7 @@ For local development, run the checked-out script directly:
 ./bin/contextkit help
 ```
 
-ContextKit doctrine and guides live as Markdown in this repository under
-`doctrine/`. They are not copied into initialized projects. The manager reads
-them from the checkout, from the global install at `~/.contextkit/doctrine`, or
-from `CONTEXTKIT_DOCTRINE_DIR` when that environment variable is set.
-
-The always-on operating doctrine is injected into generated runtime context for
-each host. Detailed authoring, validation, audit, assets, routines, capabilities,
-migration, hooks, and destructive-operation rules are served on demand through
-`contextkit guide <topic>`.
-
-ContextKit verbs are mechanisms. Guides are rule sources. Commands produce
-mechanical output. Output names rule sources. Repairs use the named guide.
-
-## Core Commands
-
-```sh
-contextkit init
-contextkit adopt
-contextkit migrate --plan
-contextkit install-hooks --target codex --target claude
-contextkit build --target all
-contextkit doctor
-contextkit audit
-contextkit audit --write
-contextkit guide bootstrap
-contextkit guide authoring
-contextkit guide validation
-contextkit guide destructive
-```
-
-Use `contextkit init` for a new agent project. Use `contextkit migrate --plan`
-and `contextkit adopt` for an existing repository; adopt adds the technical
-binding and bootstrap files without creating body folders over legacy material.
-Run `contextkit guide bootstrap` for the exact new-project and migration
-sequences, including how Codex and Claude receive generated context.
-
-## Project Shape
+## Project Body
 
 ```text
 .contextkit/
@@ -93,13 +75,74 @@ capabilities/
   settings.json
 ```
 
-`.contextkit/` is the technical manager binding. The other top-level folders are
-visible because they are the agent project's body: its live context, supporting
-materials, repeatable procedures, and capability envelopes.
+Layer roles:
 
-ContextKit's own operating doctrine is not part of this project body. It remains
-in the ContextKit source/install and is injected into generated context at build
-time.
+- `.contextkit/` - technical binding, config, and ContextKit-native audit
+  reports;
+- `context/` - live project doctrine and routing surface;
+- `assets/` - evidence, plans, research, and session history;
+- `routines/` - repeatable procedures surfaced into runtime context;
+- `capabilities/` - project envelopes for enabled tools;
+- `.codex/` and `.claude/` - generated host runtime context and hooks.
+
+## Runtime Context
+
+ContextKit compiles source files into host-specific generated context:
+
+- Codex: `.codex/generated/context.md`
+- Claude: `.claude/rules/CONTEXT.md`
+
+Generated files are build artifacts. Edit the source body, then rebuild:
+
+```sh
+contextkit build --target all
+```
+
+ContextKit's own operating doctrine and guides live in this repository under
+`doctrine/`. They are not copied into initialized projects. The manager reads
+them from the checkout, from the global install at `~/.contextkit/doctrine`, or
+from `CONTEXTKIT_DOCTRINE_DIR`.
+
+## Context Files
+
+Context files are Markdown files with front matter:
+
+```yaml
+---
+title: Human title
+description: One-line routing description used by the model to decide when to load it.
+load: inline|stub
+order: 100
+---
+```
+
+`inline` files are emitted fully into generated context. `stub` files are emitted
+as title, path, and description only. Files sort by numeric `order`, then path.
+
+Use `contextkit guide authoring` for placement, naming, load modes, and quality
+rules.
+
+## Core Commands
+
+```sh
+contextkit init
+contextkit adopt
+contextkit migrate --plan
+contextkit install-hooks --target codex --target claude
+contextkit build --target all
+contextkit doctor
+contextkit audit
+contextkit audit --write
+contextkit guide bootstrap
+contextkit guide authoring
+contextkit guide validation
+contextkit guide destructive
+```
+
+Command outputs point to rule-source guides. Load the named guide, edit source
+files, then rerun the command.
+
+## Default Config
 
 The default binding is intentionally minimal:
 
@@ -114,27 +157,23 @@ output = ".codex/generated/context.md"
 output = ".claude/rules/CONTEXT.md"
 ```
 
-The standard source folders are `context/`, `assets/`, `routines/`, and
+Standard source folders are `context/`, `assets/`, `routines/`, and
 `capabilities/`. Add a `[sources]` table only when a project deliberately
 overrides one of those paths.
 
 `.gitignore` and `.env.local` are technical bootstrap files. `contextkit init`
-creates the local env file as a non-secret template and makes sure git ignores
-local env, generated runtime context, and capability state.
+creates a non-secret `.env.local` template and gitignore guards for local env,
+generated runtime context, and capability state.
 
-Context files are Markdown files with front matter:
+## Capabilities
 
-```yaml
----
-title: Human title
-description: One-line routing description used by the model to decide when to load it.
-load: inline|stub
-order: 100
----
-```
+Capabilities are separate tool packages managed by the
+[capabilities project](https://github.com/ai-cluster-one/capabilities).
 
-`inline` files are emitted fully into compiled context. `stub` files are emitted
-as title, path, and description only. Files sort by numeric `order`, then path.
+When a repository has a `capabilities/` project envelope, ContextKit reads the
+enabled tool set and includes tool awareness in generated runtime context.
+Capability implementation, release, credentials, connections, and capability
+audit live in the capabilities project and in capability-owned guides.
 
 ## v0 Scope
 
@@ -143,10 +182,10 @@ The current implementation covers the local, repo-backed agent body:
 - project binding through `.contextkit/config.toml`;
 - Codex and Claude context compilation;
 - thin hook installation;
-- native routine index inclusion from `routines/**/*.md` front matter;
-- native capability index inclusion from `capabilities/settings.json`,
-  installed capability snapshots, and visible project envelopes;
-- advisory audit reports with `--write` persistence under `.contextkit/audits/`.
+- routine index inclusion from `routines/**/*.md` front matter;
+- capability index inclusion from `capabilities/settings.json`, installed
+  capability snapshots, and visible project envelopes;
+- advisory audit reports with `--write` persistence under `.contextkit/audits/`;
 - on-demand doctrine guides loaded from the ContextKit source/install, not copied
   into each project.
 
