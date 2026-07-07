@@ -38,18 +38,22 @@ contextkit guide authoring
 .contextkit/
   README.md
   config.toml
-.context/
+context/
   identity/
   guidelines/
   architecture/
-.assets/
+assets/
   audits/
   sessions/
   plans/
   research/
-.routines/
-.capabilities/
+routines/
+capabilities/
 ```
+
+`.contextkit/` is the technical manager binding. The other top-level folders are
+visible because they are the agent project's body and memory, not hidden tool
+internals.
 
 Context files are Markdown files with front matter:
 
@@ -73,8 +77,12 @@ The current implementation covers the local/repo-backed step:
 - Codex and Claude context compilation;
 - thin hook installation;
 - routine index inclusion when the `routine` CLI is available;
-- capability index inclusion when the `capabilities` CLI and `.capabilities/`
+- capability index inclusion when the `capabilities` CLI and `capabilities/`
   are present;
-- advisory audit reports with `--write` persistence under `.assets/audits/`.
+- advisory audit reports with `--write` persistence under `assets/audits/`.
+
+Legacy dot-folder projects are still supported. If `context/` is absent but
+`.context/` exists, ContextKit adopts the legacy path in place; the same fallback
+applies to assets, routines, and capabilities.
 
 Migration and groom apply modes are intentionally conservative in v0.

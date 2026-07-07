@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,12 @@ VERSION = 1
 CONFIG_REL = Path(".contextkit") / "config.toml"
 README_REL = Path(".contextkit") / "README.md"
 DEFAULT_SOURCES = {
+    "context": "context",
+    "assets": "assets",
+    "routines": "routines",
+    "capabilities": "capabilities",
+}
+LEGACY_DOT_SOURCES = {
     "context": ".context",
     "assets": ".assets",
     "routines": ".routines",
@@ -106,6 +113,29 @@ def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
     )
 
 
+@contextmanager
+def _legacy_alias(root: Path, source_dir: Path, legacy_name: str,
+                  warnings: list[str]):
+    """Temporarily expose visible folders to older CLIs that still expect dots."""
+    source = root / source_dir
+    alias = root / legacy_name
+    created = False
+    if source_dir.as_posix() != legacy_name and source.is_dir() and not alias.exists():
+        try:
+            alias.symlink_to(source_dir, target_is_directory=True)
+            created = True
+        except OSError as exc:
+            warnings.append(f"could not bridge `{source_dir}` to `{legacy_name}`: {exc}")
+    try:
+        yield
+    finally:
+        if created:
+            try:
+                alias.unlink()
+            except OSError as exc:
+                warnings.append(f"could not remove temporary `{legacy_name}` bridge: {exc}")
+
+
 def _git_root(start: Path) -> Path | None:
     try:
         proc = _run(["git", "rev-parse", "--show-toplevel"], start)
@@ -122,13 +152,23 @@ def _find_project_root(start: Path | None = None) -> Path:
     for directory in (here, *here.parents):
         if (directory / CONFIG_REL).exists():
             return directory
-        if (directory / ".context").is_dir():
+        if (directory / "context").is_dir() or (directory / ".context").is_dir():
             return directory
         if (directory / ".git").is_dir():
             return directory
         if directory == home:
             break
     return _git_root(here) or here
+
+
+def _source_defaults(root: Path) -> dict[str, str]:
+    """Prefer visible project-body folders, but adopt old dot folders in place."""
+    sources = dict(DEFAULT_SOURCES)
+    for key, visible in DEFAULT_SOURCES.items():
+        legacy = LEGACY_DOT_SOURCES[key]
+        if not (root / visible).exists() and (root / legacy).exists():
+            sources[key] = legacy
+    return sources
 
 
 def _load_toml(path: Path) -> dict[str, Any]:
@@ -144,7 +184,7 @@ def _load_toml(path: Path) -> dict[str, Any]:
 
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
-    sources = dict(DEFAULT_SOURCES)
+    sources = _source_defaults(root)
     sources.update((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
 
     targets: dict[str, Path] = dict(DEFAULT_TARGETS)
@@ -267,16 +307,18 @@ Authoring help: `contextkit guide authoring`
 """
 
 
-def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
+def _routine_index(root: Path, routines_dir: Path, capabilities_dir: Path, warnings: list[str]) -> str:
     if not (root / routines_dir).is_dir():
-        warnings.append("routine layer not present; add `.routines/` or run `contextkit guide routines`")
+        warnings.append(f"routine layer not present; add `{routines_dir.as_posix()}/` or run `contextkit guide routines`")
         return ""
     routine = shutil.which("routine")
     if not routine:
         warnings.append("routine CLI not found; routine index omitted")
         return ""
     try:
-        proc = _run([routine, "index"], root)
+        with _legacy_alias(root, routines_dir, ".routines", warnings):
+            with _legacy_alias(root, capabilities_dir, ".capabilities", warnings):
+                proc = _run([routine, "index"], root, env={"CLAUDE_PROJECT_DIR": str(root)})
     except (OSError, subprocess.TimeoutExpired) as exc:
         warnings.append(f"routine index failed: {exc}")
         return ""
@@ -288,7 +330,7 @@ def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
 
 def _capability_index(root: Path, capabilities_dir: Path, warnings: list[str]) -> str:
     if not (root / capabilities_dir).is_dir():
-        warnings.append("capability layer not present; add `.capabilities/` or run `contextkit guide capabilities`")
+        warnings.append(f"capability layer not present; add `{capabilities_dir.as_posix()}/` or run `contextkit guide capabilities`")
         return ""
     manager = shutil.which("capabilities")
     if not manager:
@@ -300,7 +342,12 @@ def _capability_index(root: Path, capabilities_dir: Path, warnings: list[str]) -
     except OSError:
         pass
     try:
-        proc = _run([manager, "context", "--codex"], root, env={CODEX_BUILD_ENV: "1"})
+        with _legacy_alias(root, capabilities_dir, ".capabilities", warnings):
+            proc = _run(
+                [manager, "context", "--codex"],
+                root,
+                env={CODEX_BUILD_ENV: "1", "CLAUDE_PROJECT_DIR": str(root)},
+            )
     except (OSError, subprocess.TimeoutExpired) as exc:
         warnings.append(f"capabilities context --codex failed: {exc}")
         return ""
@@ -333,7 +380,7 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     warnings: list[str] = []
     inline = [item for item in files if item.load == "inline"]
     stubs = [item for item in files if item.load == "stub"]
-    routine_index = _routine_index(root, routines_dir, warnings)
+    routine_index = _routine_index(root, routines_dir, capabilities_dir, warnings)
     capability_index = _capability_index(root, capabilities_dir, warnings)
 
     title = "Codex" if target == "codex" else "Claude"
@@ -372,7 +419,7 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         out += ["No stub context files.", ""]
 
     if routine_index:
-        out += ["---", "", "<!-- Routine index - generated from .routines front matter. -->", "",
+        out += ["---", "", f"<!-- Routine index - generated from {routines_dir.as_posix()} front matter. -->", "",
                 routine_index.strip(), ""]
     if capability_index:
         out += ["---", "", "<!-- Capability index - generated by `capabilities context` from the live registry. -->", "",
@@ -423,39 +470,39 @@ def _context_file(title: str, description: str, load: str, order: int, body: str
 
 
 SKELETON_FILES = {
-    ".context/identity/MISSION.md": _context_file(
+    "context/identity/MISSION.md": _context_file(
         "Mission", "The agent's mission, operating scope, and north star.", "inline", 10,
         "State what this agent exists to do, what good work looks like, and what is out of scope.",
     ),
-    ".context/identity/AGENT.md": _context_file(
+    "context/identity/AGENT.md": _context_file(
         "Agent", "The agent identity, voice, operating posture, and boundaries.", "inline", 20,
         "Describe who the agent is inside this project and how it should appear while operating.",
     ),
-    ".context/identity/OWNER.md": _context_file(
+    "context/identity/OWNER.md": _context_file(
         "Owner", "The owner or supervisor relationship and command authority.", "inline", 30,
         "Name the owner role, supervision model, and when the agent should ask for direction.",
     ),
-    ".context/identity/PEOPLE.md": _context_file(
+    "context/identity/PEOPLE.md": _context_file(
         "People", "Project people, roles, authority, and durable communication facts.", "stub", 40,
         "Record durable people facts only when they matter to future agent work.",
     ),
-    ".context/guidelines/CONSTITUTION.md": _context_file(
+    "context/guidelines/CONSTITUTION.md": _context_file(
         "Constitution", "Always-on project doctrine and behavior rules for the agent.", "inline", 100,
         "Define the agent's project-specific principles, validation rules, escalation path, and tradeoffs.",
     ),
-    ".context/guidelines/LIMITATIONS.md": _context_file(
+    "context/guidelines/LIMITATIONS.md": _context_file(
         "Limitations", "Hard limits for the agent and for context authoring in this project.", "inline", 110,
         "List non-negotiable constraints. Keep each limitation owned here and avoid duplicating it elsewhere.",
     ),
-    ".context/guidelines/ASSETS.md": _context_file(
+    "context/guidelines/ASSETS.md": _context_file(
         "Assets", "Map of on-demand asset folders and what belongs in each.", "stub", 120,
-        "Explain `.assets/` as supporting memory: audits, sessions, plans, research, and other historical material.",
+        "Explain `assets/` as supporting memory: audits, sessions, plans, research, and other historical material.",
     ),
-    ".context/architecture/RUNTIME.md": _context_file(
+    "context/architecture/RUNTIME.md": _context_file(
         "Runtime", "Runtime bodies, host surfaces, generated context, and execution boundaries.", "stub", 200,
         "Describe how this agent runs, where generated context lands, and which host surfaces consume it.",
     ),
-    ".context/architecture/SERVICES.md": _context_file(
+    "context/architecture/SERVICES.md": _context_file(
         "Services", "External services, ownership boundaries, and source-of-truth routing.", "stub", 210,
         "Map external systems at the boundary level. Detailed tool operation belongs in capabilities.",
     ),
@@ -467,10 +514,10 @@ def _config_body() -> str:
 kind = "agent-project"
 
 [sources]
-context = ".context"
-assets = ".assets"
-routines = ".routines"
-capabilities = ".capabilities"
+context = "context"
+assets = "assets"
+routines = "routines"
+capabilities = "capabilities"
 
 [targets.codex]
 output = ".codex/generated/context.md"
@@ -497,9 +544,9 @@ Common commands:
 - `contextkit audit`
 - `contextkit guide authoring`
 
-Add durable project memory under `.context/`. Put historical or supporting material
-under `.assets/`. Put repeatable procedures under `.routines/`. Put installed tool
-envelopes under `.capabilities/`.
+Add durable project memory under `context/`. Put historical or supporting material
+under `assets/`. Put repeatable procedures under `routines/`. Put installed tool
+envelopes under `capabilities/`.
 """
 
 
@@ -509,8 +556,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     skipped: list[str] = []
     _write_if_missing(root / CONFIG_REL, _config_body(), created, skipped)
     _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
-    for rel in [".assets/audits", ".assets/sessions", ".assets/plans", ".assets/research",
-                ".routines", ".capabilities"]:
+    for rel in ["assets/audits", "assets/sessions", "assets/plans", "assets/research",
+                "routines", "capabilities"]:
         path = root / rel
         if path.exists():
             skipped.append(str(path))
@@ -707,13 +754,13 @@ def _content_owner_hint(rel: str, text: str) -> str | None:
     lowered = text.lower()
     if "/guidelines/" in rel and sum(word in lowered for word in
                                     ["runtime", "container", "deployment", "service architecture"]) >= 2:
-        return "This reads like architecture; consider `.context/architecture/`."
+        return "This reads like architecture; consider `context/architecture/`."
     if "/architecture/" in rel and sum(word in lowered for word in
                                       ["always", "never", "must", "limitation", "do not"]) >= 4:
-        return "This reads like doctrine or constraints; consider `.context/guidelines/`."
+        return "This reads like doctrine or constraints; consider `context/guidelines/`."
     if "/identity/" in rel and sum(word in lowered for word in
                                   ["cli", "endpoint", "container", "database", "queue"]) >= 3:
-        return "This reads like runtime/service architecture; consider `.context/architecture/`."
+        return "This reads like runtime/service architecture; consider `context/architecture/`."
     return None
 
 
@@ -770,8 +817,8 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 "Prefer self-contained wording and let compiled metadata route sibling files.",
             ))
         asset_live_pattern = re.compile(
-            r"(?:see|load|read|per|according to|based on|from)\s+`?\.assets/(?:sessions|plans|research)/"
-            r"|\]\(\.assets/(?:sessions|plans|research)/",
+            r"(?:see|load|read|per|according to|based on|from)\s+`?(?:\.assets|assets)/(?:sessions|plans|research)/"
+            r"|\]\((?:\.assets|assets)/(?:sessions|plans|research)/",
             flags=re.I,
         )
         if asset_live_pattern.search(item.body):
@@ -817,7 +864,8 @@ def _audit_report(root: Path, findings: list[Finding]) -> str:
 
 
 def _write_audit(root: Path, report: str) -> Path:
-    target_dir = root / ".assets" / "audits"
+    cfg = _config(root)
+    target_dir = root / cfg["sources"]["assets"] / "audits"
     target_dir.mkdir(parents=True, exist_ok=True)
     today = _dt.date.today().isoformat()
     target = target_dir / f"{today}_contextkit-audit.md"
@@ -899,7 +947,8 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         _die("contextkit migrate --apply is not implemented in v0; use --plan first", 6)
     candidates = [
         "CLAUDE.md", "AGENTS.md", ".claude/rules", ".codex/generated/context.md",
-        ".codex/hooks/build-context.sh", ".routines", ".capabilities", ".context",
+        ".codex/hooks/build-context.sh", "routines", "capabilities", "context",
+        ".routines", ".capabilities", ".context",
     ]
     lines = ["# ContextKit Migration Plan", "", f"Project: `{root}`", "", "Detected surfaces:", ""]
     for rel in candidates:
@@ -912,10 +961,11 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         "Suggested path:",
         "",
         "1. Run `contextkit init --binding-only` to add `.contextkit/` without replacing project memory.",
-        "2. Move durable live facts into `.context/` files with front matter.",
-        "3. Preserve historical material under `.assets/`.",
+        "2. Move durable live facts into `context/` files with front matter.",
+        "3. Preserve historical material under `assets/`.",
         "4. Run `contextkit build --target all` and compare generated host context.",
         "5. Replace local host compilers with `contextkit install-hooks` after review.",
+        "6. For legacy projects, rename `.context`/`.assets`/`.routines`/`.capabilities` to their visible forms when the neighboring CLIs are ready.",
         "",
         "Deletion of root host instruction files is intentionally manual in v0.",
     ]
@@ -926,7 +976,7 @@ GUIDES = {
     "authoring": """# ContextKit Authoring Guide
 
 - One durable fact has one live home.
-- Put current project doctrine in `.context/`.
+- Put current project doctrine in `context/`.
 - Use `load: inline` only for always-needed rules.
 - Use `load: stub` for context that should be discoverable but loaded on demand.
 - Make `description` specific; it is the routing surface.
@@ -934,7 +984,7 @@ GUIDES = {
 """,
     "assets": """# Assets Guide
 
-`.assets/` holds supporting memory, not always-on doctrine.
+`assets/` holds supporting memory, not always-on doctrine.
 
 Use `audits/` for persisted reviews, `sessions/` for session records, `plans/`
 for design plans, and `research/` for evidence. Promote durable facts into the
@@ -942,20 +992,20 @@ live layer that owns them.
 """,
     "routines": """# Routines Guide
 
-Routines are repeatable procedures under `.routines/`. They should describe the
+Routines are repeatable procedures under `routines/`. They should describe the
 ordered work, not restate tool models, identifiers, or source-system doctrine.
 Install the `routine` capability to validate and render the routine index.
 """,
     "audit": """# Audit Guide
 
 `contextkit audit` is advisory by default. `contextkit audit --write` persists a
-report under `.assets/audits/`. v0 checks metadata, weak descriptions, duplicate
+report under `assets/audits/`. v0 checks metadata, weak descriptions, duplicate
 exact claims, internal context links, likely taxonomy mismatch, and inline bloat.
 """,
     "migration": """# Migration Guide
 
-Start with `contextkit migrate --plan`. Move live durable facts into `.context/`,
-preserve historical records under `.assets/`, and replace host-specific generated
+Start with `contextkit migrate --plan`. Move live durable facts into `context/`,
+preserve historical records under `assets/`, and replace host-specific generated
 files only after the compiled ContextKit output matches the project semantics.
 """,
     "hooks": """# Hooks Guide
@@ -967,8 +1017,10 @@ hook that builds `.claude/rules/CONTEXT.md`.
     "capabilities": """# Capabilities Guide
 
 Capabilities remain separate tools. ContextKit includes their project index by
-calling the installed `capabilities` manager when `.capabilities/` is present.
-Capability-owned references and operational state stay inside `.capabilities/`.
+calling the installed `capabilities` manager when `capabilities/` is present.
+Until the capabilities manager natively supports visible folders, ContextKit
+bridges `capabilities/` to `.capabilities` only while generating the index.
+Capability-owned references and operational state stay inside `capabilities/`.
 """,
 }
 
