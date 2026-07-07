@@ -846,13 +846,24 @@ def _wire_claude(root: Path) -> dict[str, Any]:
         "/bin/bash -lc 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); "
         "PATH=\"$root/.contextkit/manager:$PATH\" contextkit build --target claude >/dev/null'"
     )
+    needle = "contextkit build --target claude"
     hook_added = False
-    if not any("contextkit build --target claude" in (hook or {}).get("command", "")
+    hook_changed = False
+    for entry in session:
+        for hook in (entry or {}).get("hooks", []):
+            if needle in (hook or {}).get("command", ""):
+                if hook.get("command") != command:
+                    hook["command"] = command
+                    hook_changed = True
+                break
+        if hook_changed:
+            break
+    if not any(needle in (hook or {}).get("command", "")
                for entry in session for hook in (entry or {}).get("hooks", [])):
         session.append({"hooks": [{"type": "command", "command": command}]})
         hook_added = True
     _write_json(settings_file, settings)
-    return {"settings": str(settings_file), "hook_added": hook_added}
+    return {"settings": str(settings_file), "hook_added": hook_added, "hook_changed": hook_changed}
 
 
 def cmd_install_hooks(args: argparse.Namespace) -> None:
