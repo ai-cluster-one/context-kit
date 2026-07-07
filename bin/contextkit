@@ -13,6 +13,8 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,19 @@ DEFAULT_TARGETS = {
     "claude": Path(".claude") / "rules" / "CONTEXT.md",
 }
 CAP_HOME = Path(os.environ.get("CAPABILITIES_HOME") or (Path.home() / ".capabilities"))
+DOCTRINE_REL = Path("doctrine")
+GUIDE_TOPICS = [
+    "bootstrap",
+    "authoring",
+    "validation",
+    "assets",
+    "routines",
+    "audit",
+    "migration",
+    "hooks",
+    "capabilities",
+]
+DEFAULT_RAW_BASE = "https://raw.githubusercontent.com/ai-cluster-one/context-kit"
 
 REQUIRED_GITIGNORE_LINES = [
     ".env",
@@ -128,6 +143,77 @@ def _emit(value: Any, as_json: bool = False) -> None:
         sys.stdout.write(value if value.endswith("\n") else value + "\n")
     else:
         sys.stdout.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+
+
+def _script_path() -> Path:
+    try:
+        return Path(sys.argv[0]).resolve()
+    except OSError:
+        return Path(__file__).resolve()
+
+
+def _doctrine_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env = os.environ.get("CONTEXTKIT_DOCTRINE_DIR")
+    if env:
+        candidates.append(Path(env).expanduser())
+
+    script = _script_path()
+    # Repo checkout: <repo>/bin/contextkit -> <repo>/doctrine.
+    # Installed manager: ~/.contextkit/.manager/contextkit -> ~/.contextkit/doctrine.
+    # Local bundle fallback: <dir>/contextkit -> <dir>/doctrine.
+    candidates += [
+        script.parent.parent / DOCTRINE_REL,
+        script.parent / DOCTRINE_REL,
+        Path.home() / ".contextkit" / DOCTRINE_REL,
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            out.append(candidate)
+            seen.add(key)
+    return out
+
+
+def _remote_ref() -> str:
+    return os.environ.get("CONTEXTKIT_REF") or os.environ.get("CONTEXTKIT_TAG") or "main"
+
+
+def _remote_base() -> str:
+    return os.environ.get("CONTEXTKIT_RAW_BASE", DEFAULT_RAW_BASE).rstrip("/")
+
+
+def _fetch_doctrine(rel: Path) -> str | None:
+    url = f"{_remote_base()}/{_remote_ref()}/{DOCTRINE_REL.as_posix()}/{rel.as_posix()}"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            return response.read().decode("utf-8")
+    except (OSError, UnicodeError, urllib.error.URLError):
+        return None
+
+
+def _read_doctrine(rel: str) -> str:
+    path = Path(rel)
+    for base in _doctrine_candidates():
+        source = base / path
+        try:
+            return source.read_text()
+        except OSError:
+            continue
+
+    fetched = _fetch_doctrine(path)
+    if fetched is not None:
+        return fetched
+
+    searched = ", ".join(str(path) for path in _doctrine_candidates())
+    _die(
+        f"ContextKit doctrine source not found: {DOCTRINE_REL / path}\n"
+        f"Searched: {searched}\n"
+        "Set CONTEXTKIT_DOCTRINE_DIR, install ContextKit doctrine globally, or run from the ContextKit checkout.",
+        6,
+    )
 
 
 def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
@@ -302,34 +388,7 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
 
 
 def _runtime_doctrine() -> str:
-    return """# ContextKit Operating Doctrine
-
-## Bootstrap and validation
-
-- New project sequence: `git init`, `contextkit init`, `contextkit install-hooks --target codex --target claude`, `contextkit doctor`, `contextkit build --target all`, `contextkit audit`.
-- Existing project sequence: `contextkit migrate --plan`, `contextkit adopt`, move legacy dot body folders to visible folders, install hooks, then run doctor/build/audit.
-- After changing the agent body, run `contextkit doctor`, `contextkit build --target all`, and `contextkit audit` before committing.
-- Generated context files are build artifacts. Do not edit `.codex/generated/context.md` or `.claude/rules/CONTEXT.md` by hand.
-
-## Authoring rules
-
-- One durable fact has one live home. When facts conflict, update the owning file instead of duplicating a second truth.
-- Live source of truth beats documentation when they disagree.
-- `context/` is current doctrine. Every context Markdown file needs front matter: `title`, specific one-line `description`, `load: inline|stub`, and numeric `order`.
-- Use `load: inline` only for always-needed constraints. Use `load: stub` for discoverable context that should be loaded on demand.
-- Do not use Markdown links between context files as routing. Routing belongs in descriptions, generated indexes, and explicit loading.
-- `assets/` is historical evidence and supporting material, not live doctrine. Promote durable facts into the live owning layer; do not rewrite old assets just to make them current.
-- `routines/` holds repeatable procedures. A routine describes ordered work and when to run it; it should not duplicate tool contracts, identifiers, or durable source-system doctrine.
-- `capabilities/` is an external tool layer that ContextKit indexes when present. Capability creation, validation, audit, and internal doctrine belong to the capabilities manager/repo, not to ContextKit.
-- Do not store loose work in progress in the repo. Durable work belongs in the project's chosen work system or in a deliberate asset/audit artifact.
-
-## Audit and repair
-
-- Use `contextkit audit` for the whole live context and `contextkit audit-file <path>` for one file.
-- Fix missing metadata, weak descriptions, duplicate durable facts, internal context links, inline bloat, and content that lives at the wrong layer.
-- Persist formal reports with `contextkit audit --write` under `assets/audits/`.
-- After remediation, rebuild and audit again until the project body is coherent.
-"""
+    return _read_doctrine("runtime.md")
 
 
 def _generated_block(target: str) -> str:
@@ -1526,215 +1585,11 @@ def cmd_migrate(args: argparse.Namespace) -> None:
         _emit(_format_migration_plan(plan))
 
 
-GUIDES = {
-    "bootstrap": """# Bootstrap Guide
-
-## New project
-
-Start from the repository root:
-
-```sh
-git init
-contextkit init
-contextkit install-hooks --target codex --target claude
-contextkit doctor
-contextkit build --target all
-contextkit audit
-```
-
-`contextkit init` creates the technical binding (`.contextkit/`), local bootstrap
-guards (`.gitignore`, `.env.local`), and the visible agent body folders:
-`context/`, `assets/`, `routines/`, and `capabilities/`.
-
-## Existing project
-
-Start with a plan, then move deliberately:
-
-```sh
-contextkit migrate --plan
-contextkit adopt
-```
-
-Rename legacy dot body folders to their visible forms:
-
-```sh
-git mv .context context
-git mv .routines routines
-git mv .capabilities capabilities
-```
-
-If `.assets/` and `assets/` both exist, merge them manually so historical
-material is preserved, then remove `.assets/`. After the body is visible:
-
-```sh
-contextkit install-hooks --target codex --target claude
-contextkit doctor
-contextkit build --target all
-contextkit audit
-```
-
-## How the agent learns ContextKit
-
-ContextKit is passed to agents through host bindings and generated context, not
-through ambient memory. Codex reads `.codex/generated/context.md`; Claude reads
-`.claude/rules/CONTEXT.md`. Those files contain the manager header, rebuild
-command, doctor command, help command, and indexes for context, routines, and
-capabilities. Do not edit generated files by hand.
-""",
-    "authoring": """# ContextKit Authoring Guide
-
-## Creating or editing context files
-
-Put current project doctrine in `context/`. Every Markdown file must start with:
-
-```yaml
----
-title: Human title
-description: Specific one-line routing description.
-load: inline|stub
-order: 100
----
-```
-
-Use `load: inline` only when the body is needed in nearly every run. Use
-`load: stub` when the model only needs the title, path, and description until a
-task calls for that doctrine.
-
-## Ownership rules
-
-- One durable fact has one live home.
-- When adding a fact, identify the owning layer and file before writing.
-- If a fact already exists elsewhere, update or move it instead of duplicating.
-- Make `description` specific enough that the model can decide when to load it.
-- Avoid Markdown links between context files as routing; generated metadata owns routing.
-- Keep live state, worklists, pending balances, and open task scratch out of context.
-
-## After authoring
-
-Run `contextkit build --target all` and `contextkit audit`. If the audit points
-to bloat, duplicate facts, weak descriptions, or wrong placement, fix the source
-file and rebuild.
-""",
-    "assets": """# Assets Guide
-
-`assets/` holds supporting project material, not always-on doctrine.
-
-Use `audits/` for persisted reviews, `sessions/` for session records, `plans/`
-for design plans, and `research/` for evidence. Promote durable facts into the
-live layer that owns them.
-""",
-    "routines": """# Routines Guide
-
-Routines are repeatable procedures under `routines/`. A routine should tell the
-agent when to run the procedure and the ordered work to perform.
-
-Each routine Markdown file should start with:
-
-```yaml
----
-name: routine-name
-description: Specific one-line trigger and outcome.
----
-```
-
-Authoring rules:
-
-- Put procedural sequencing in routines.
-- Keep durable doctrine in `context/`, not duplicated in routines.
-- Keep tool contracts and identifier maps in the owning capability layer, not routines.
-- Make the `description` a routing surface: when should this routine be loaded?
-- Prefer one routine per repeatable job; split only when the trigger/outcome differs.
-
-After editing routines, run `contextkit build --target all` so the generated
-routine index is refreshed.
-""",
-    "audit": """# Audit Guide
-
-Use audits to bring the project body back into shape.
-
-Commands:
-
-```sh
-contextkit audit
-contextkit audit-file context/path/to/file.md
-contextkit audit --write
-```
-
-`contextkit audit` is advisory by default. `contextkit audit --write` persists a
-report under `assets/audits/`.
-
-Fix these classes first:
-
-- missing or invalid front matter;
-- weak routing descriptions;
-- duplicate durable facts;
-- internal context links used as routing;
-- inline files that should be stubs;
-- material living in the wrong layer;
-- historical assets treated as live doctrine.
-
-After remediation, run `contextkit build --target all` and `contextkit audit`
-again. The goal is a coherent body, not a quiet report at any cost.
-""",
-    "validation": """# Validation Guide
-
-Run validation after init, migration, hook changes, or any meaningful body edit:
-
-```sh
-contextkit doctor
-contextkit build --target all
-contextkit audit
-```
-
-`doctor` checks project binding, required files, gitignore guards, visible body
-layers, legacy dot folders, and host binding locations.
-
-`doctor` confirms the project can expose `capabilities/` as a layer, but it does
-not validate capability implementation, creation doctrine, or capability tests.
-Use the capabilities manager and capabilities repo for that.
-
-`build --target all` proves Codex and Claude generated contexts can be compiled
-from source. Generated files are ignored build artifacts and should not be edited
-by hand.
-
-`audit` checks the live context layer for metadata quality, duplicate durable
-facts, stale routing assumptions, wrong placement, and inline bloat.
-
-Before committing, also confirm that `.env.local`, `.env`, `.codex/generated/`,
-and `.claude/rules/CONTEXT.md` are not staged.
-""",
-    "migration": """# Migration Guide
-
-Start with `contextkit migrate --plan`. Move live durable facts into `context/`,
-preserve historical records under `assets/`, and replace host-specific generated
-files only after the compiled ContextKit output matches the project semantics.
-""",
-    "hooks": """# Hooks Guide
-
-`contextkit install-hooks --target codex` writes a thin Codex adapter that calls
-`contextkit build --target codex`. `--target claude` wires a Claude SessionStart
-hook that builds `.claude/rules/CONTEXT.md`.
-""",
-    "capabilities": """# Capabilities Guide
-
-Capabilities remain separate tools. ContextKit includes their project index from
-`capabilities/settings.json`, installed capability snapshots, and each enabled
-capability's visible project envelope under `capabilities/<name>/`.
-Capability-owned references and operational state stay inside `capabilities/`.
-
-ContextKit does not define how to create, validate, audit, or release a
-capability. Use the capabilities manager/repo for capability doctrine. ContextKit
-only surfaces the enabled capability set into generated project context.
-""",
-}
-
-
 def cmd_guide(args: argparse.Namespace) -> None:
     topic = args.topic or "authoring"
-    guide = GUIDES.get(topic)
-    if guide is None:
-        _die(f"unknown guide topic: {topic}\nAvailable: {', '.join(sorted(GUIDES))}", 6)
-    _emit(guide)
+    if topic not in GUIDE_TOPICS:
+        _die(f"unknown guide topic: {topic}\nAvailable: {', '.join(GUIDE_TOPICS)}", 6)
+    _emit(_read_doctrine((Path("guides") / f"{topic}.md").as_posix()))
 
 
 def cmd_templates(_: argparse.Namespace) -> None:

@@ -35,6 +35,11 @@ For local development, run the checked-out script directly:
 ./bin/contextkit help
 ```
 
+ContextKit doctrine and guides live as Markdown in this repository under
+`doctrine/`. They are not copied into initialized projects. The manager reads
+them from the checkout, from the global install at `~/.contextkit/doctrine`, or
+from `CONTEXTKIT_DOCTRINE_DIR` when that environment variable is set.
+
 ## Core Commands
 
 ```sh
@@ -82,6 +87,10 @@ capabilities/
 `.contextkit/` is the technical manager binding. The other top-level folders are
 visible because they are the agent project's body: its live context, supporting
 materials, repeatable procedures, and capability envelopes.
+
+ContextKit's own operating doctrine is not part of this project body. It remains
+in the ContextKit source/install and is injected into generated context at build
+time.
 
 The default binding is intentionally minimal:
 
