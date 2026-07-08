@@ -173,7 +173,7 @@ Codex reads `.codex/generated/context.md`. Claude reads
 
 - the manager header;
 - rebuild and doctor commands;
-- always-on ContextKit operating doctrine;
+- always-on ContextKit operating runtime;
 - inline project context;
 - metadata stubs for on-demand project context;
 - routine index;

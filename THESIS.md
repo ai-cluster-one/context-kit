@@ -142,7 +142,7 @@ approves the consequences.
 ContextKit itself separates the layers it ships:
 
 - Thesis: the worldview.
-- Canon or doctrine: foundational laws and context lenses.
+- Canon: foundational laws and context lenses.
 - Standard: instructions for applying those laws to authored surfaces.
 - Bundle: ready runtime blocks, guides, and templates delivered to projects.
 - CLI: executable manager and command contracts.

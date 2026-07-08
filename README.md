@@ -13,7 +13,7 @@ truth for how a project works and how agent context is delivered.
 
 - a visible project structure for agent context;
 - generated runtime context for Codex and Claude;
-- always-on operating doctrine loaded from ContextKit;
+- always-on operating runtime loaded from the ContextKit bundle;
 - on-demand guides for authoring, validation, audits, routines, assets,
   migration, hooks, and destructive operations;
 - advisory audits that point to the rule source for each finding;
@@ -96,6 +96,18 @@ Layer roles:
 - `capabilities/` - project envelopes for enabled tools;
 - `.codex/` and `.claude/` - generated host runtime context and hooks.
 
+## Product Source Layout
+
+ContextKit separates the sources it ships:
+
+- `THESIS.md` - the worldview of ContextKit.
+- `canon/` - foundational laws and context lenses.
+- `standard/` - rules for applying canon to authored product surfaces.
+- `bundle/` - shipped runtime blocks, on-demand guides, and future templates or
+  routines.
+- `bin/` - the executable manager and command contracts.
+- `install.sh` - the installer for the manager and bundle.
+
 ## Runtime Context
 
 ContextKit compiles source files into host-specific generated context:
@@ -109,10 +121,10 @@ Generated files are build artifacts. Edit the source body, then rebuild:
 contextkit build --target all
 ```
 
-ContextKit's own operating doctrine and guides live in this repository under
-`doctrine/`. They are not copied into initialized projects. The manager reads
-them from the checkout, from the global install at `~/.contextkit/doctrine`, or
-from `CONTEXTKIT_DOCTRINE_DIR`.
+ContextKit's shipped runtime block and guides live in this repository under
+`bundle/`. They are not copied into initialized projects. The manager reads
+them from the checkout, from the global install at `~/.contextkit/bundle`, or
+from `CONTEXTKIT_BUNDLE_DIR`.
 
 ## Context Files
 
@@ -262,7 +274,7 @@ The current implementation covers the local, repo-backed agent body:
 - capability index inclusion from `capabilities/settings.json`, installed
   capability snapshots, and visible project envelopes;
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`;
-- on-demand doctrine guides loaded from the ContextKit source/install, not copied
+- on-demand bundled guides loaded from the ContextKit source/install, not copied
   into each project.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename

@@ -38,7 +38,7 @@ context.
 
 The compiler:
 
-- reads ContextKit's always-on operating doctrine from the manager install or
+- reads ContextKit's always-on operating runtime from the manager install or
   checkout;
 - reads project `context/` files;
 - inlines `load: inline` files;

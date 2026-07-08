@@ -31,7 +31,7 @@ the source of truth.
 - Do not hand-edit generated context to fix a source problem.
 - Do not copy ContextKit doctrine into the project to make a hook work.
 - Keep host-specific paths in target config and adapters.
-- Keep host-neutral doctrine in `context/` or ContextKit `doctrine/`.
+- Keep host-neutral doctrine in `context/` or the ContextKit `bundle/`.
 
 After hook changes:
 

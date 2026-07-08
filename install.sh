@@ -1,5 +1,5 @@
 #!/bin/sh
-# contextkit bootstrap — installs the `contextkit` manager and its global doctrine.
+# contextkit bootstrap — installs the `contextkit` manager and its global bundle.
 #
 #   curl -fsSL https://raw.githubusercontent.com/ai-cluster-one/context-kit/main/install.sh | sh
 #
@@ -17,8 +17,8 @@ REPO="https://raw.githubusercontent.com/ai-cluster-one/context-kit/$TAG"
 CTX_HOME="${CONTEXTKIT_HOME:-$HOME/.contextkit}"
 MANAGER_DIR="$CTX_HOME/.manager"
 MANAGER="$MANAGER_DIR/contextkit"
-DOCTRINE_DIR="$CTX_HOME/doctrine"
-DOCTRINE_FILES="
+BUNDLE_DIR="$CTX_HOME/bundle"
+BUNDLE_FILES="
 runtime.md
 guides/bootstrap.md
 guides/authoring.md
@@ -49,10 +49,10 @@ fi
 
 printf 'contextkit bootstrap — the plan:\n'
 printf '  fetch    %s/bin/contextkit\n' "$REPO"
-printf '  fetch    %s/doctrine/*.md\n' "$REPO"
+printf '  fetch    %s/bundle/*.md\n' "$REPO"
 if [ -n "$SHA256" ]; then printf '  verify   sha256 %s\n' "$SHA256"; else printf '  verify   (no checksum pinned for ref %s)\n' "$TAG"; fi
 printf '  place    %s\n' "$MANAGER"
-printf '  doctrine %s\n' "$DOCTRINE_DIR"
+printf '  bundle   %s\n' "$BUNDLE_DIR"
 printf '  symlink  %s/contextkit\n' "$BIN_DIR"
 
 if (exec < /dev/tty) 2>/dev/null; then
@@ -71,14 +71,14 @@ if [ -n "$SHA256" ]; then
 fi
 head -1 "$tmp" | grep -q "python3" || err "fetched file does not look like the manager script"
 
-mkdir -p "$MANAGER_DIR" "$BIN_DIR" "$DOCTRINE_DIR"
+mkdir -p "$MANAGER_DIR" "$BIN_DIR" "$BUNDLE_DIR"
 cp "$tmp" "$MANAGER"
 chmod +x "$MANAGER"
 
-for rel in $DOCTRINE_FILES; do
-    dest="$DOCTRINE_DIR/$rel"
+for rel in $BUNDLE_FILES; do
+    dest="$BUNDLE_DIR/$rel"
     mkdir -p "$(dirname "$dest")"
-    curl -fsSL "$REPO/doctrine/$rel" -o "$dest" || err "fetch failed: $REPO/doctrine/$rel"
+    curl -fsSL "$REPO/bundle/$rel" -o "$dest" || err "fetch failed: $REPO/bundle/$rel"
 done
 
 ln -sf "$MANAGER" "$BIN_DIR/contextkit"

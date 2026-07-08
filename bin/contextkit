@@ -39,7 +39,8 @@ DEFAULT_TARGETS = {
     "claude": Path(".claude") / "rules" / "CONTEXT.md",
 }
 CAP_HOME = Path(os.environ.get("CAPABILITIES_HOME") or (Path.home() / ".capabilities"))
-DOCTRINE_REL = Path("doctrine")
+BUNDLE_REL = Path("bundle")
+LEGACY_DOCTRINE_REL = Path("doctrine")
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
@@ -155,20 +156,27 @@ def _script_path() -> Path:
         return Path(__file__).resolve()
 
 
-def _doctrine_candidates() -> list[Path]:
+def _bundle_candidates() -> list[Path]:
     candidates: list[Path] = []
-    env = os.environ.get("CONTEXTKIT_DOCTRINE_DIR")
+    env = os.environ.get("CONTEXTKIT_BUNDLE_DIR")
     if env:
         candidates.append(Path(env).expanduser())
+    legacy_env = os.environ.get("CONTEXTKIT_DOCTRINE_DIR")
+    if legacy_env:
+        candidates.append(Path(legacy_env).expanduser())
 
     script = _script_path()
-    # Repo checkout: <repo>/bin/contextkit -> <repo>/doctrine.
-    # Installed manager: ~/.contextkit/.manager/contextkit -> ~/.contextkit/doctrine.
-    # Local bundle fallback: <dir>/contextkit -> <dir>/doctrine.
+    # Repo checkout: <repo>/bin/contextkit -> <repo>/bundle.
+    # Installed manager: ~/.contextkit/.manager/contextkit -> ~/.contextkit/bundle.
+    # Local bundle fallback: <dir>/contextkit -> <dir>/bundle.
+    # Legacy doctrine paths are compatibility bridges, not canonical product layout.
     candidates += [
-        script.parent.parent / DOCTRINE_REL,
-        script.parent / DOCTRINE_REL,
-        Path.home() / ".contextkit" / DOCTRINE_REL,
+        script.parent.parent / BUNDLE_REL,
+        script.parent / BUNDLE_REL,
+        Path.home() / ".contextkit" / BUNDLE_REL,
+        script.parent.parent / LEGACY_DOCTRINE_REL,
+        script.parent / LEGACY_DOCTRINE_REL,
+        Path.home() / ".contextkit" / LEGACY_DOCTRINE_REL,
     ]
     out: list[Path] = []
     seen: set[str] = set()
@@ -188,8 +196,8 @@ def _remote_base() -> str:
     return os.environ.get("CONTEXTKIT_RAW_BASE", DEFAULT_RAW_BASE).rstrip("/")
 
 
-def _fetch_doctrine(rel: Path) -> str | None:
-    url = f"{_remote_base()}/{_remote_ref()}/{DOCTRINE_REL.as_posix()}/{rel.as_posix()}"
+def _fetch_bundle(rel: Path) -> str | None:
+    url = f"{_remote_base()}/{_remote_ref()}/{BUNDLE_REL.as_posix()}/{rel.as_posix()}"
     try:
         with urllib.request.urlopen(url, timeout=8) as response:
             return response.read().decode("utf-8")
@@ -197,24 +205,24 @@ def _fetch_doctrine(rel: Path) -> str | None:
         return None
 
 
-def _read_doctrine(rel: str) -> str:
+def _read_bundle(rel: str) -> str:
     path = Path(rel)
-    for base in _doctrine_candidates():
+    for base in _bundle_candidates():
         source = base / path
         try:
             return source.read_text()
         except OSError:
             continue
 
-    fetched = _fetch_doctrine(path)
+    fetched = _fetch_bundle(path)
     if fetched is not None:
         return fetched
 
-    searched = ", ".join(str(path) for path in _doctrine_candidates())
+    searched = ", ".join(str(path) for path in _bundle_candidates())
     _die(
-        f"ContextKit doctrine source not found: {DOCTRINE_REL / path}\n"
+        f"ContextKit bundle source not found: {BUNDLE_REL / path}\n"
         f"Searched: {searched}\n"
-        "Set CONTEXTKIT_DOCTRINE_DIR, install ContextKit doctrine globally, or run from the ContextKit checkout.",
+        "Set CONTEXTKIT_BUNDLE_DIR, install ContextKit bundle globally, or run from the ContextKit checkout.",
         6,
     )
 
@@ -424,8 +432,12 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
     return files, errors
 
 
-def _runtime_doctrine() -> str:
-    return _read_doctrine("runtime.md")
+def _runtime_block() -> str:
+    return _read_bundle("runtime.md")
+
+
+def _guide_rule_sources() -> str:
+    return "; ".join(f"`contextkit guide {topic}`" for topic in GUIDE_TOPICS)
 
 
 def _generated_block(target: str) -> str:
@@ -435,7 +447,7 @@ Bootstrap: `contextkit bootstrap`
 Rebuild: `contextkit build --target {target}`
 Doctor: `contextkit doctor`
 Help: `contextkit help`
-Rule sources: `contextkit guide bootstrap`; `contextkit guide authoring`; `contextkit guide validation`; `contextkit guide assets`; `contextkit guide routines`; `contextkit guide audit`; `contextkit guide destructive`; `contextkit guide capabilities`
+Rule sources: {_guide_rule_sources()}
 """
 
 
@@ -645,7 +657,7 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         out += [f"- {warning}" for warning in warnings]
         out.append("")
 
-    out += ["---", "", _runtime_doctrine().strip(), "", "---", "", "# Inline Context", ""]
+    out += ["---", "", _runtime_block().strip(), "", "---", "", "# Inline Context", ""]
     if inline:
         for item in inline:
             out += ["---", "", f"## Source: `{item.rel.as_posix()}`", "", item.body.strip(), ""]
@@ -2061,7 +2073,7 @@ def cmd_guide(args: argparse.Namespace) -> None:
     topic = args.topic or "authoring"
     if topic not in GUIDE_TOPICS:
         _die(f"unknown guide topic: {topic}\nAvailable: {', '.join(GUIDE_TOPICS)}", 6)
-    _emit(_read_doctrine((Path("guides") / f"{topic}.md").as_posix()))
+    _emit(_read_bundle((Path("guides") / f"{topic}.md").as_posix()))
 
 
 def cmd_templates(_: argparse.Namespace) -> None:
