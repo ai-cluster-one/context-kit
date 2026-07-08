@@ -1,9 +1,16 @@
 # Hooks Guide
 
+Use this guide when installing, reviewing, or repairing host bindings.
+
+Rule owners: Host-Neutral Core, Generated Output, Hooks Standard, and
+Operational Provenance.
+
+## Role
+
 Host bindings deliver generated ContextKit output to agent runtimes.
 
-Hooks are delivery mechanisms. A hook is a thin adapter that calls
-`contextkit build`. Project doctrine lives in source files.
+Hooks are thin adapters. They call `contextkit build` and write configured
+generated targets. Project doctrine lives in source files.
 
 ## Codex
 
@@ -11,9 +18,8 @@ Hooks are delivery mechanisms. A hook is a thin adapter that calls
 contextkit install-hooks --target codex
 ```
 
-This writes the Codex adapter that rebuilds `.codex/generated/context.md` from
-the project body. Codex-specific wiring belongs under `.codex/`; source doctrine
-belongs under `context/`.
+The Codex adapter rebuilds generated context from the project body. Codex
+wiring belongs under `.codex/`; source doctrine belongs in the visible body.
 
 ## Claude
 
@@ -21,17 +27,16 @@ belongs under `context/`.
 contextkit install-hooks --target claude
 ```
 
-This wires a Claude SessionStart hook that rebuilds
-`.claude/rules/CONTEXT.md`. The generated file is the Claude delivery target, not
-the source of truth.
+The Claude hook rebuilds its configured generated target. The generated file is
+delivery output, not source truth.
 
 ## Hook Rules
 
 - One generated file has one writer: ContextKit.
-- Do not hand-edit generated context to fix a source problem.
-- Do not copy ContextKit doctrine into the project to make a hook work.
+- Do not hand-edit generated context.
+- Do not copy ContextKit doctrine into a project to make a hook work.
 - Keep host-specific paths in target config and adapters.
-- Keep host-neutral doctrine in `context/` or the ContextKit `bundle/`.
+- Keep host-neutral doctrine in source.
 
 After hook changes:
 

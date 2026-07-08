@@ -9,3 +9,16 @@ surfaces.
 Standards are more concrete than canon and less specific than a bundled file or
 implementation detail.
 
+## Surface Standards
+
+- `audit-reports.md`
+- `bootstrap-and-migration.md`
+- `capabilities.md`
+- `context-files.md`
+- `generated-output.md`
+- `guides.md`
+- `hooks.md`
+- `readme-and-cli.md`
+- `routines.md`
+- `runtime.md`
+- `validation.md`

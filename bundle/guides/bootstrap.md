@@ -1,217 +1,100 @@
 # Bootstrap Guide
 
-Bootstrap establishes the ContextKit technical binding, visible project body,
-host bindings, generated runtime context, and first validation pass.
+Use this guide when initializing or adopting a ContextKit project body.
 
-## Main Command
+Rule owners: Visible Body, Project Stewardship, Bounded Compatibility,
+Convergent Operations, Generated Output, Human Gates, Bootstrap And Migration
+Standard, Hooks Standard, and Validation Standard.
 
-Run from the project root:
+Use `contextkit help` for exact command syntax.
 
-```sh
-contextkit bootstrap
-```
+## Goal
 
-Effects:
+Bootstrap establishes:
 
-- initializes Git when `.git` is absent and the directory has no project files;
-- creates a pre-bootstrap Git checkpoint before project file changes when
-  `.git` is absent and the directory already contains files;
-- creates missing `.contextkit/`, `.gitignore`, `.env.local`, `context/`,
-  `assets/`, `routines/`, and `capabilities/` entries;
-- creates starter context templates only when `--with-template` is passed;
-- leaves existing project body files in place;
-- installs Codex and Claude bindings;
-- builds generated runtime context;
-- runs doctor;
-- runs audit.
+- ContextKit binding under `.contextkit/`;
+- ignored local env and generated-state guards;
+- visible body layers: `context/`, `assets/`, `routines/`, `capabilities/`;
+- configured host bindings;
+- generated runtime context;
+- first doctor/build/audit pass.
 
-Safety contract:
+Existing project material has standing. Inspect before changing it. Visible body
+files are created only when absent. Existing body files remain in place.
 
-- existing non-git project files get a checkpoint before ContextKit changes
-  project files;
-- `--yes` approves checkpoint creation and managed hook replacement;
-- visible body files are created only when absent;
-- ContextKit-managed generated files are rebuilt from source;
-- existing non-ContextKit files in managed hook paths require confirmation
-  before replacement;
-- invalid host JSON blocks bootstrap until repaired;
-- dot body folders block bootstrap until migration is planned.
+## Main Flow
 
-## New Project
-
-Start inside an empty directory:
+From the project root:
 
 ```sh
 contextkit bootstrap
 ```
 
-Created binding and empty body layers:
+Bootstrap creates missing binding and empty body layers, installs configured
+host bindings, builds generated context, runs doctor, and runs audit.
 
-- `.contextkit/config.toml`;
-- `.contextkit/README.md`;
-- `.contextkit/audits/`;
-- `.gitignore` guards;
-- `.env.local` placeholder;
-- `context/`;
-- `assets/sessions/`, `assets/plans/`, `assets/research/`;
-- `routines/`;
-- `capabilities/settings.json`.
+If a directory has files but no Git repository, bootstrap asks for a
+pre-bootstrap Git safeguard before ContextKit changes project files. `--yes`
+approves that safeguard and managed hook replacement.
 
-Default config:
-
-```toml
-version = 1
-type = "agent-project"
-
-[targets.codex]
-output = ".codex/generated/context.md"
-
-[targets.claude]
-output = ".claude/rules/CONTEXT.md"
-```
-
-Standard source folders are implicit: `context/`, `assets/`, `routines/`,
-`capabilities/`. Add `[sources]` only for deliberate path overrides.
-
-## Existing Project
-
-Run from the repository root:
+Starter context templates are opt-in:
 
 ```sh
-contextkit bootstrap
+contextkit bootstrap --with-template
 ```
 
-Existing visible body files remain in place. Missing binding files, guards,
-host bindings, generated context, and empty layers are added. Starter context
-templates are added only when `--with-template` is passed.
+## Component Flows
 
-If `.git` is absent, bootstrap creates a checkpoint before ContextKit changes
-project files:
+Use component commands when you need a smaller change:
 
 ```sh
-git init
-git add -A
-git commit -m "ContextKit pre-bootstrap checkpoint"
+contextkit init
+contextkit init --with-layers
+contextkit init --with-template
+contextkit adopt
+contextkit adopt --with-layers
+contextkit adopt --with-template
+contextkit install-hooks --target codex --target claude
+contextkit build --target all
+contextkit doctor
+contextkit audit
 ```
 
-The checkpoint respects existing `.gitignore` rules and ContextKit local secret
-guards.
+The CLI owns exact option behavior. This guide owns when and why to use the
+flows.
 
-For dot body folders, inspect the migration plan:
+## Existing Projects
+
+Existing visible body files remain in place. Missing binding files, guards, host
+bindings, generated context, and empty layers may be added.
+
+Legacy dot folders are migration inputs:
+
+```text
+.context/       -> context/
+.assets/        -> assets/
+.routines/      -> routines/
+.capabilities/  -> capabilities/
+```
+
+Inspect migration before moving files:
 
 ```sh
 contextkit migrate --plan
 ```
 
-Rename dot body folders to visible body folders before bootstrap completes:
+Merge collisions manually. Preserve historical material in `assets/`; promote
+only durable live facts into `context/`.
 
-```sh
-git mv .context context
-git mv .assets assets
-git mv .routines routines
-git mv .capabilities capabilities
-```
+## Host Delivery
 
-If `.assets/` and `assets/` both exist, merge manually. Preserve historical
-material in `assets/`; promote only durable live facts into `context/`.
+Agents learn project context through generated runtime context. Codex and Claude
+read generated targets from host bindings. Generated files are build artifacts:
+edit source files, then rebuild.
 
-## Targeted Bootstrap
+## Quality Bar
 
-Bootstrap one host binding:
-
-```sh
-contextkit bootstrap --target codex
-```
-
-```sh
-contextkit bootstrap --target claude
-```
-
-Bootstrap both host bindings explicitly:
-
-```sh
-contextkit bootstrap --target codex --target claude
-```
-
-## Component Commands
-
-Create only the ContextKit binding:
-
-```sh
-contextkit init
-```
-
-Create empty body layers without starter context templates:
-
-```sh
-contextkit init --with-layers
-```
-
-Create empty layers plus starter context templates:
-
-```sh
-contextkit init --with-template
-```
-
-Adopt the same modes from inside an existing ContextKit body:
-
-```sh
-contextkit adopt
-contextkit adopt --with-layers
-contextkit adopt --with-template
-```
-
-Install host bindings:
-
-```sh
-contextkit install-hooks --target codex --target claude
-```
-
-Build generated runtime context:
-
-```sh
-contextkit build --target all
-```
-
-Check shape and bindings:
-
-```sh
-contextkit doctor
-```
-
-Run the advisory audit:
-
-```sh
-contextkit audit
-```
-
-## How The Agent Learns ContextKit
-
-Agents learn ContextKit through generated runtime context, not through ambient
-memory and not through copied doctrine files.
-
-Codex reads `.codex/generated/context.md`. Claude reads
-`.claude/rules/CONTEXT.md`. Those files contain:
-
-- the manager header;
-- rebuild and doctor commands;
-- always-on ContextKit operating runtime;
-- inline project context;
-- metadata stubs for on-demand project context;
-- routine index;
-- capability index.
-
-Generated files are build artifacts. Edit source files, then rebuild.
-
-## Bootstrap Quality Bar
-
-A project is bootstrapped when:
-
-- `contextkit bootstrap` completes;
-- `contextkit doctor` reports ok;
-- `contextkit build --target all` writes configured targets;
-- `contextkit audit` has no unreviewed findings;
-- `.env.local` exists and is ignored;
-- generated context files are ignored or intentionally tracked by project policy;
-- visible body folders are present;
-- dot body folders are absent.
+A project is bootstrapped when doctor is ok, generated context builds, audit has
+no unreviewed findings, local env and generated files are ignored or
+intentionally tracked, visible body folders are present, and legacy dot body
+folders are not canonical.

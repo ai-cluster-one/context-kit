@@ -1,45 +1,30 @@
 # Capabilities Guide
 
-Capability boundary for ContextKit: what ContextKit indexes, what remains in the
-capabilities manager/repo.
+Use this guide when a ContextKit project has enabled external tools under
+`capabilities/`.
 
-Capabilities are external tools. ContextKit does not turn them into ContextKit
-doctrine. ContextKit only surfaces the enabled capability set as one layer of the
-agent body.
+Rule owners: Tool Truth, Human Gates, Capabilities Standard, and the capability
+tool's own surfaces.
 
-## What ContextKit Owns
+## Boundary
+
+ContextKit indexes capability awareness. It does not turn capabilities into
+ContextKit doctrine.
 
 ContextKit owns:
 
-- discovering the project envelope layer at `capabilities/`;
-- reading `capabilities/settings.json` as the project gate;
-- indexing enabled capability awareness into generated runtime context;
-- surfacing installed capability stubs and guide topic names when available;
-- warning when the capability layer is absent or malformed enough to affect
-  context generation.
+- discovery of the project envelope layer;
+- the project gate in `capabilities/settings.json`;
+- enabled capability awareness in generated runtime context;
+- installed stubs and guide topic names when available;
+- warnings that affect context generation.
 
-ContextKit's generated context tells the agent that capability CLIs are available
-on PATH and that each tool's own surface is authoritative.
-
-## What ContextKit Does Not Own
-
-ContextKit does not define:
-
-- how to create a capability;
-- how to validate or audit a capability implementation;
-- capability release or install mechanics;
-- credential cascade rules;
-- connection registries;
-- capability state homes;
-- command contracts, schemas, or output envelopes;
-- capability-specific authoring guides.
-
-Those belong to the capabilities manager and the capability repo. If a fact is
-about the internal design of a capability, it does not belong in ContextKit.
+Capability tools own their command contracts, readiness, credentials,
+connections, state homes, schemas, releases, and internal authoring doctrine.
 
 ## Operating A Capability
 
-Use the tool's own surface:
+Use the tool's own live surfaces:
 
 ```sh
 <name> help
@@ -48,41 +33,25 @@ Use the tool's own surface:
 <name> guide <topic>
 ```
 
-Use the manager for the installed/enabled set:
+Use the capabilities manager for the installed/enabled set.
 
-```sh
-capabilities list
-capabilities enable <name>
-capabilities disable <name>
-capabilities update <name>
-```
-
-Readiness is proven by `<name> doctor`, not by a prose claim in context.
+Readiness is proven by the capability's doctor surface, not by prose in context.
 
 ## Policy Gates
 
 Exit 4 is policy, not a crash. It means the action is blocked by a project gate
-or a read-only connection. The agent asks the user. The agent does not enable a
-capability, change a connection, or lift write permission by itself.
+or read-only connection. Ask the user. Do not enable a capability, change a
+connection, or lift write permission by yourself.
 
 ## Project Envelopes
 
-Files under `capabilities/<name>/` are project-side envelopes for that tool:
-non-secret identifiers, references, connection declarations, and state guards
-where the capability doctrine allows them. ContextKit may list their presence,
-but it does not reinterpret their internal meaning.
-
-If an envelope contains durable project doctrine that is not capability-specific,
-promote that fact into `context/`. If it contains capability authoring doctrine,
-move it to the capability repo.
+Files under `capabilities/<name>/` hold project-side, non-secret references
+where capability doctrine allows them. If an envelope contains durable project
+doctrine that is not capability-specific, promote it into `context/`. If it
+contains capability-general doctrine, move it to the capability owner.
 
 ## Quality Bar
 
-The ContextKit/capability boundary is healthy when:
-
-- generated context tells the agent which capabilities are enabled;
-- detailed use is discovered through the capability CLI;
-- readiness is checked at use-time;
-- project-specific capability references stay in the project envelope;
-- capability-general doctrine stays in the capability repo;
-- ContextKit docs do not copy capability contracts.
+The boundary is healthy when generated context says which capabilities are
+enabled, detailed use is discovered from the capability, readiness is checked at
+use time, and ContextKit docs do not copy capability contracts.

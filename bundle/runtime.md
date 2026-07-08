@@ -1,137 +1,76 @@
-# Operating Doctrine
+# Operating Runtime
 
-Live doctrine: action rules, evidence routing, repeatable procedures, enabled
-tool envelopes, host bindings.
+You are operating inside a ContextKit-managed project.
 
-Always-on: orientation, law, routing, safety.
-On-demand: authoring guides, validation guides, audit guides, repair guides.
+ContextKit gives the project a visible source body, generated host runtime
+context, on-demand guides, routines, and capability awareness. Source truth
+lives in the project body and owning tools. Generated host files are delivery
+output.
 
-## Commands
+## Operating Rules
 
-- `contextkit bootstrap`: missing body creation, hook install, build, doctor,
-  audit. No-git non-empty directories get a pre-bootstrap checkpoint before
-  project files change. Existing body files stay in place. Non-ContextKit files
-  in managed hook paths require confirmation.
-- `contextkit doctor`: project shape and binding check. Rule sources:
-  `contextkit guide validation`, `contextkit guide bootstrap`.
-- `contextkit build --target all`: compile source body into host runtime
-  context.
-- `contextkit audit`: machine findings. Rule source: `contextkit guide audit`.
-  Each finding names its own `rule_source`.
-- `contextkit audit-file <path>`: machine findings for one file.
-- `contextkit audit --write`: persisted report under `.contextkit/audits/`.
-- `contextkit migrate --plan`: migration plan. Rule source:
-  `contextkit guide migration`.
-- `contextkit groom --plan`: repair plan from audit findings.
+- Identify the owner before editing a durable fact.
+- Edit source files, not generated output.
+- Keep one durable fact in one live home.
+- Use always-on context for orientation, law, routing, and safety.
+- Load stub context, guides, routines, assets, capabilities, and tools only when
+  the task calls for them.
+- State live doctrine in present tense.
+- Preserve evidence as evidence; promote durable conclusions deliberately.
+- Prove tool readiness at use time with the owning tool.
+- Stop for human approval before destructive, external, publishing, credential,
+  access, or product-direction consequences.
 
-Flow: run command, load named rule source, edit source file, rerun command.
-Repairs edit source files, never generated output.
+## Source Body
 
-## Laws
+`.contextkit/` is technical binding, config, and ContextKit-native artifacts.
+It is not project doctrine.
 
-### One fact, one home
+`context/` is live project doctrine. Use `contextkit guide authoring`.
 
-Every durable fact has one live home: principle, path, command, identifier,
-workflow rule, limitation, or project decision.
+`assets/` is historical evidence: sessions, plans, research, and raw records.
+Use `contextkit guide assets`.
 
-Before adding a fact: find the owner. Update the owner. If no owner exists,
-create one. Other surfaces route to the owner; they do not restate the fact.
+`routines/` is repeatable procedure. Use `contextkit guide routines`.
 
-Generated context, README prose, routines, assets, and host-specific files are
-not parallel doctrine homes.
+`capabilities/` is the project envelope for enabled tools. ContextKit indexes
+awareness; capability internals remain tool-owned. Use
+`contextkit guide capabilities` and the tool's own help or doctor surface.
 
-### Altitude
+Generated host context is delivery output. Rebuild it from source with
+`contextkit build`.
 
-Always-on context: orientation, law, routing, safety.
-Stub context: discoverable doctrine loaded by task.
-Assets: evidence, history, research, plans, session records.
-Routines: repeatable ordered work.
-Capabilities: tool awareness and project envelopes.
-Tool contracts, readiness, credentials, connections: owning tool or manager.
+## Discovery
 
-### Tool truth
+Use `contextkit help` for exact command syntax.
 
-Command-answerable knowledge lives in the command.
+Use on-demand guides as rule sources:
 
-- ContextKit: `contextkit help`, `contextkit guide <topic>`,
-  `contextkit doctor`, `contextkit audit`.
-- Capabilities: `<capability> help`, `<capability> doctor`,
-  `<capability> connections`, `<capability> guide <topic>`.
+- `contextkit guide bootstrap`
+- `contextkit guide authoring`
+- `contextkit guide validation`
+- `contextkit guide audit`
+- `contextkit guide assets`
+- `contextkit guide routines`
+- `contextkit guide capabilities`
+- `contextkit guide destructive`
+- `contextkit guide migration`
+- `contextkit guide hooks`
 
-Do not transcribe CLI contracts, output schemas, readiness claims, or generated
-indexes into prose. Prove readiness at use-time.
-
-### Present tense
-
-State what exists now. No "formerly", no migration story, no comparison as
-definition. Change history lives in git, assets, or audit reports.
-
-### Source edits
-
-Edit source files. Do not edit generated files.
-Prefer small auditable edits.
-
-Generated files:
-
-- `.codex/generated/context.md`
-- `.claude/rules/CONTEXT.md`
-
-### Human voice
-
-Drafted human text preserves the user's voice and intent.
-
-## Body Layers
-
-### `.contextkit/`
-
-Technical binding: config, manager marker, ContextKit-native artifacts,
-`.contextkit/audits/`.
-
-Not project body. No live project doctrine.
-
-### `context/`
-
-Live doctrine. Rule source for creation, movement, and audit:
-`contextkit guide authoring`.
-
-### `assets/`
-
-Evidence and history. Rule source for records and promotion:
-`contextkit guide assets`.
-
-ContextKit audit reports: `.contextkit/audits/`.
-
-### `routines/`
-
-Repeatable procedures. Rule source: `contextkit guide routines`.
-
-### `capabilities/`
-
-Enabled tool envelopes. ContextKit indexes awareness only. Rule source for the
-ContextKit boundary: `contextkit guide capabilities`. Capability internals:
-capabilities manager and capability-owned guides.
-
-## Rule Sources
-
-- `contextkit guide bootstrap`: new project body, adoption, required files.
-- `contextkit guide authoring`: `context/` files, live doctrine placement.
-- `contextkit guide validation`: validation sequence and checks.
-- `contextkit guide audit`: audit walk, finding classes, report shape.
-- `contextkit guide assets`: evidence records and promotion.
-- `contextkit guide routines`: repeatable procedures.
-- `contextkit guide capabilities`: ContextKit/capability boundary.
-- `contextkit guide destructive`: destructive or state-erasing operations.
-- `contextkit guide migration`: legacy and mixed-layout migration.
-- `contextkit guide hooks`: host bindings and generated context delivery.
+Command outputs name their rule sources. Load the named guide before repairing
+the source.
 
 ## Work Loop
 
-Before editing: identify owner, search existing owner.
+Before editing, search for the existing owner.
 
-After editing live context, routines, hooks, or capability envelopes:
+When changing project body, routines, hooks, or capability envelopes:
 
 ```sh
 contextkit doctor
 contextkit build --target all
 contextkit audit
 ```
+
+Repair the owning source or tool surface, then rerun the command that exposed
+the problem.

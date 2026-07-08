@@ -1,11 +1,10 @@
 # Migration Guide
 
-Migration converts existing projects into ContextKit agent bodies, especially
-repos with legacy dot body folders, host-specific instruction files, or scattered
-project memory.
+Use this guide when converting an existing project into a ContextKit agent body.
 
-Migration starts with classification, then file moves. Layer guides contain the
-destination rules.
+Rule owners: Visible Body, Bounded Compatibility, Project Stewardship, One Fact
+One Home, Generated Output, Bootstrap And Migration Standard, and the destination
+layer guide.
 
 ## Start With A Plan
 
@@ -14,25 +13,25 @@ contextkit migrate --plan
 ```
 
 Read the plan before changing files. It reports visible layers, bootstrap files,
-host bindings, and instruction files that may overlap with generated ContextKit
-output.
+host bindings, generated targets, and instruction files that may overlap with
+ContextKit output.
 
-## Classification Pass
+## Classification
 
-For each existing file or paragraph, choose the destination by loading the guide
-that owns the candidate layer:
+For each existing file or paragraph, choose the destination by loading the owner
+for that destination:
 
-| Candidate destination | Rule source |
+| Destination | Rule source |
 | --- | --- |
 | `context/` | `contextkit guide authoring` |
 | `assets/` | `contextkit guide assets` |
 | `routines/` | `contextkit guide routines` |
-| `capabilities/` | `contextkit guide capabilities`, then capability-owned docs |
+| `capabilities/` | `contextkit guide capabilities`, then capability-owned surfaces |
 | generated host output | `contextkit guide hooks` |
-| local secrets/config | `contextkit guide bootstrap` and the owning tool docs |
+| local secrets or config | `contextkit guide bootstrap` and the owning tool |
 
 If a fact appears in several places, pick the owner and remove the rest or turn
-them into role pointers according to the owning guide.
+them into role pointers.
 
 ## Legacy Dot Folders
 
@@ -45,7 +44,7 @@ routines/
 capabilities/
 ```
 
-Dot body folders are migration inputs:
+Dot folders are migration inputs:
 
 ```text
 .context/       -> context/
@@ -54,21 +53,17 @@ Dot body folders are migration inputs:
 .capabilities/  -> capabilities/
 ```
 
-Use `git mv` when possible. Merge collisions manually; do not overwrite the
-project's evidence or current doctrine.
+Use `git mv` when possible. Merge collisions manually. Preserve evidence and
+current doctrine instead of overwriting.
 
 ## Host Instruction Files
 
-Root files like `CLAUDE.md`, `AGENTS.md`, or hand-authored rules may contain
-valuable doctrine. They do not remain a second source of truth once ContextKit
-owns generated runtime context.
-
-Classify their content with the guide routing table above. Then let ContextKit
-generate host context.
+Root instruction files such as `CLAUDE.md` or `AGENTS.md` may contain valuable
+doctrine. They do not remain a second source of truth once ContextKit owns
+generated runtime context. Classify their contents, move durable facts to the
+owner, and let ContextKit generate host context.
 
 ## Verification
-
-After migration:
 
 ```sh
 contextkit doctor
@@ -76,8 +71,5 @@ contextkit build --target all
 contextkit audit --write
 ```
 
-Review the report under `.contextkit/audits/`, fix the source files, rebuild, and
-audit again.
-
-Migration is complete when generated context has the same or better routing
-value than the old host-specific files, without duplicating their facts.
+Migration is complete when generated context has equal or better routing value
+than the old host-specific files without duplicating their facts.

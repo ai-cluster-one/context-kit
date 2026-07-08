@@ -1,9 +1,14 @@
 # Validation Guide
 
-Validation follows initialization, migration, hook changes, and meaningful edits
-to `context/`, `assets/`, `routines/`, or `capabilities/`.
+Use this guide after initialization, migration, hook changes, or meaningful
+edits to `context/`, `assets/`, `routines/`, or `capabilities/`.
 
-Validation has three layers:
+Rule owners: Validation Standard, Audit Reports Standard, Generated Output
+Standard, Context Files Standard, and Rule Source Routing.
+
+## Sequence
+
+Run:
 
 ```sh
 contextkit doctor
@@ -11,68 +16,26 @@ contextkit build --target all
 contextkit audit
 ```
 
-## `doctor`: Shape And Binding
+`doctor` checks shape, binding, local/generated guards, visible layers,
+capability gate, legacy dot layers, and configured targets.
 
-`doctor` checks whether the repository can be treated as a ContextKit agent
-body. It validates:
+`build` proves source body can compile into host runtime context. Generated
+files are build artifacts; do not fix them by hand.
 
-- `.contextkit/config.toml`;
-- `.contextkit/README.md`;
-- `.gitignore` guards for env, generated context, Python cache, and capability
-  state;
-- `.env.local` presence;
-- visible body layers: `context/`, `assets/`, `routines/`, `capabilities/`;
-- `capabilities/settings.json`;
-- legacy dot body folders marked for rename;
-- target output paths for Codex and Claude.
+`audit` checks coherence and quality. Each finding names a rule source. Load the
+named guide or owner before repairing.
 
-`doctor` does not validate the internals of a capability. It only confirms that
-the project exposes a capability envelope layer. Capability implementation,
-creation, release, credentials, connections, and capability audit live in the
-capabilities manager/repo.
+## Human Review
 
-## `build`: Delivery To Hosts
+Machine checks are the floor. Review asks:
 
-`build --target all` proves the source body can compile into host runtime
-context.
+- Which rule source owns the layer?
+- Was that source loaded before judging the file?
+- Did any finding cross layers?
+- Did the repair change the owning source?
+- Did generated files stay unstaged unless intentionally tracked?
 
-The compiler:
-
-- reads ContextKit's always-on operating runtime from the manager install or
-  checkout;
-- reads project `context/` files;
-- inlines `load: inline` files;
-- emits metadata stubs for `load: stub` files;
-- generates routine and capability indexes;
-- writes host-specific generated files.
-
-Generated files are build artifacts. Edit source files, then rebuild. Do not fix
-generated output by hand.
-
-## `audit`: Coherence And Quality
-
-`audit` runs the machine pass over the project body. Use
-`contextkit guide audit` for the audit procedure, then load the owning guide for
-the layer being judged. Validation owns the sequence; the audit guide owns the
-audit walk; the authoring guides own the layer rules.
-
-Use `contextkit audit-file <path>` for a focused machine pass while editing, then
-apply the guide named by `contextkit guide audit` for that path.
-
-## Human Review Checklist
-
-The machine checks are the floor. Human or agent review asks:
-
-- Which guide owns the layer being reviewed?
-- Did the reviewer load that guide before judging the file?
-- Is every finding tied to the rule source that owns it?
-- Did any issue cross layers and therefore require two rule sources?
-- Did the repair change the owning source instead of generated output?
-- Did the change leave generated files unstaged?
-
-## Validation Before Commit
-
-Before committing:
+## Before Commit
 
 ```sh
 contextkit doctor
@@ -82,4 +45,4 @@ git status --short
 ```
 
 If validation fails, fix the source layer that owns the problem. Do not silence
-the report by moving material to a less visible place.
+the report by hiding material in a lower-visibility place.

@@ -1,32 +1,22 @@
 # Routines Guide
 
-Routine authoring under `routines/`.
+Use this guide when writing repeatable procedures under `routines/`.
 
-A routine is a repeatable procedure with a stable trigger, stable outcome, and
-enough sequencing that re-deriving it creates waste or risk.
+Rule owners: Convergent Operations, One Fact One Home, Tool Truth, Routines
+Standard, and the context or capability owner a routine applies.
 
 ## When To Create A Routine
 
-Create a routine when:
+Create a routine when the same class of work repeats, order matters,
+idempotency or safety needs preserving, the work is host-neutral, and the
+procedure applies live doctrine or tool surfaces by role.
 
-- the same class of work repeats;
-- the order of steps matters;
-- there is an idempotency or safety boundary to preserve;
-- the work can be described without depending on one host;
-- the procedure applies live doctrine or capability surfaces by role.
-
-Do not create a routine for:
-
-- a single command;
-- a one-off plan;
-- a domain model;
-- a table of ids;
-- capability help or contract details;
-- task state that belongs in a work tracker.
+Do not create a routine for a single command, one-off plan, domain model, table
+of IDs, copied tool contract, or task queue.
 
 ## File Contract
 
-Each routine is one Markdown file under `routines/` with front matter:
+Each routine is one Markdown file with front matter:
 
 ```yaml
 ---
@@ -35,104 +25,46 @@ description: Specific one-line trigger and outcome.
 ---
 ```
 
-The filename stem equals `name`:
-
-```text
-routines/month-end-close.md
-routines/release-check.md
-routines/processor/invoice.md
-```
-
-Descriptions are routing surfaces. A good description says when to run the
-routine and what outcome it produces.
-
-Weak:
-
-```yaml
-description: Steps for invoices.
-```
-
-Strong:
-
-```yaml
-description: Run when processing one invoice through validation, posting, and reconciliation.
-```
-
-## Naming And Grouping
-
-Prefer one routine per stable trigger/outcome pair.
-
-Common grouping:
-
-- `routines/producer/` - enumerates source material into jobs.
-- `routines/processor/` - works one job or item.
-- top-level `routines/*.md` - ordinary project procedures.
-
-Use singular nouns for processors (`invoice.md`, `lead.md`) and verb-object or
-domain names for ordinary procedures (`release-check.md`, `month-end-close.md`).
+The filename stem equals `name`.
 
 ## Body Contract
 
-Open with the trigger, the scope boundary, and the definition of done.
+Open with trigger, scope boundary, and definition of done.
 
-Routine body includes:
+Include:
 
-- when to run it;
-- inputs or substrate it expects;
+- expected inputs or substrate;
 - ordered steps;
 - idempotency guard;
 - stop conditions;
-- what to do when confidence is low;
+- low-confidence path;
 - expected final state;
-- which context or capability surfaces to load by role.
+- context or capability surfaces to load by role.
 
-Routine body excludes:
-
-- durable domain models that belong in `context/`;
-- raw evidence that belongs in `assets/`;
-- copied capability command surfaces;
-- secrets, credentials, or connection values;
-- project work queues or open task lists.
+Exclude durable domain models, raw evidence, copied command contracts, secrets,
+connection values, and open work queues.
 
 ## Producers And Processors
 
-A producer routine enumerates a source into work items. It states:
+A producer routine enumerates a source into work items. It states source, item
+grain, deduplication key, "already produced" test, handoff target, and
+processor.
 
-- source to inspect;
-- grain of one produced item;
-- deduplication key;
-- how "already produced" is determined;
-- where the item is handed off;
-- which processor handles it.
+A processor routine works one item. It states item shape, idempotency check,
+recipe, result, and refusal or escalation path.
 
-A processor routine works one item. It states:
+## Relationship To Owners
 
-- item shape or substrate;
-- idempotency check;
-- recipe;
-- result;
-- refusal/escalation path when the item cannot be handled safely.
-
-The processor knows only the item substrate plus the recipe. It works the item
-it was given.
-
-## Relationship To Context And Capabilities
-
-Routines apply models; they do not own models. If a routine needs a billing
-state model, it names the billing context file by role and loads it. If it needs
-a tool, it calls the capability's own help/doctor/guide surface.
-
-Do not copy identifiers, mappings, API payloads, or command contracts into a
-routine. Those belong in the owning context file, capability envelope, or tool.
+Routines apply models; they do not own models. If a routine needs a state model,
+load the context owner. If it needs a tool, use the tool's help, doctor, or
+guide surface.
 
 ## Validation
-
-After editing routines:
 
 ```sh
 contextkit build --target all
 contextkit audit
 ```
 
-Then review the generated routine index. The description gives the agent enough
-routing signal to load the routine.
+Review the generated routine index. The description should be enough for the
+agent to decide when to load the routine.

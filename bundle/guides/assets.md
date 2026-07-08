@@ -1,42 +1,34 @@
 # Assets Guide
 
-Asset authoring, evidence records, research notes, session records, and
-promotion from evidence into live context.
+Use this guide when writing evidence records, research notes, session records,
+plans, and promotion notes.
 
-`assets/` is the evidence layer. It preserves how the project learned something,
-what was considered, what was tried, and what raw material supports a decision.
-It is not the live source of truth.
+Rule owners: Evidence Promotion, Present-Tense Doctrine, One Fact One Home, and
+Assets Standard.
 
-## What Belongs Here
+## Role
+
+`assets/` preserves how the project learned something: what was considered,
+what was tried, what was observed, and what raw material supports a decision.
+It is not live doctrine.
 
 Default buckets:
 
-- `assets/sessions/` - dated session records, handoffs, summaries of work done.
-- `assets/plans/` - implementation plans, design options, migration plans,
-  discarded approaches, project proposals.
-- `assets/research/` - external research, source notes, exploration results,
-  comparison tables, raw findings.
+- `assets/sessions/` - dated session records and handoffs;
+- `assets/plans/` - plans, options, migration proposals, discarded approaches;
+- `assets/research/` - research, source notes, explorations, comparisons, raw
+  findings.
 
-Create another bucket only when a repeated evidence type needs a stable home.
-Name it for the evidence type, not for one task.
+Create another bucket only when a repeated evidence type earns a stable home.
 
-ContextKit's own audit reports are not assets. `contextkit audit --write`
-persists them under `.contextkit/audits/`.
+## What Does Not Belong
 
-## What Does Not Belong Here
+Do not use assets for current law, current constraints, domain models,
+repeatable procedures, capability contracts, readiness claims, secrets, local
+configuration, or open work queues.
 
-Do not use `assets/` for:
-
-- current project law or constraints;
-- identity, people, service maps, or domain models that future sessions must
-  treat as true;
-- repeatable procedures;
-- capability command contracts, schemas, readiness claims, or credential rules;
-- open work queues that belong in the project's work system;
-- secrets or filled local configuration.
-
-If an asset contains a durable conclusion, promote that conclusion into the
-owning `context/` file and leave the asset as evidence.
+If an asset contains a durable conclusion, promote the conclusion into the live
+owner and keep the asset as evidence.
 
 ## Naming
 
@@ -48,34 +40,25 @@ assets/plans/2026-07-07_contextkit-migration-plan.md
 assets/research/2026-07-07_host-runtime-surfaces.md
 ```
 
-Use lowercase kebab-case after the date. The date is the date of the record, not
-the date of the facts inside it.
+Use stable lowercase kebab-case for durable reference assets that are not event
+records.
 
-For durable reference assets that are not event records, use a stable name:
-
-```text
-assets/research/billing-provider-comparison.md
-```
-
-## Asset Body Shape
-
-An asset explains why it exists, what evidence it contains, and what promotes
-when it becomes durable.
+## Body Shape
 
 Recommended shape:
 
 ```markdown
 # 2026-07-07 Topic
 
-Purpose: one sentence explaining why this record exists.
+Purpose: why this record exists.
 
 ## Context
 
-What question was being answered or what work was being recorded.
+Question or work being recorded.
 
 ## Evidence
 
-Raw findings, source notes, observations, logs, or links.
+Raw findings, notes, observations, logs, or links.
 
 ## Durable Conclusions
 
@@ -83,29 +66,17 @@ Facts promoted, or ready to promote, into live context.
 
 ## Open Questions
 
-Unresolved questions. Do not let these masquerade as live doctrine.
+Unresolved questions, not live doctrine.
 ```
 
-## Promotion Rule
+If the current tool requires front matter for audits, add routing metadata
+without turning the asset into live doctrine.
 
-Promotion is a deliberate act:
+## Promotion
 
-1. Identify the durable fact inside the asset.
-2. Find the owning live file under `context/`.
-3. Move the conclusion there in present-tense form.
+1. Identify the durable conclusion.
+2. Find the live owner.
+3. Write the conclusion there in present tense.
 4. Keep the asset as evidence.
-5. Do not keep two live copies.
-6. Run `contextkit audit`.
-
-The live file mentions the asset only when provenance matters. The live file
-does not depend on the asset for everyday routing.
-
-## Quality Bar
-
-An asset is good when a future agent can tell:
-
-- why the record exists;
-- whether it is evidence, plan, research, or session history;
-- which conclusions were promoted into live context;
-- which questions remain unresolved;
-- that no secret or live-only state was committed.
+5. Remove live duplicates.
+6. Run validation.
