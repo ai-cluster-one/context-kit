@@ -33,10 +33,16 @@ Bootstrap the current directory:
 contextkit bootstrap
 ```
 
-`bootstrap` creates missing ContextKit body files, installs Codex and Claude
-bindings, builds generated context, then runs doctor and audit. Existing body
-files stay in place. Existing non-ContextKit files in managed hook paths require
-confirmation before replacement.
+`bootstrap` creates missing ContextKit binding and empty body layers, installs
+Codex and Claude bindings, builds generated context, then runs doctor and audit.
+Existing body files stay in place. Existing non-ContextKit files in managed hook
+paths require confirmation before replacement.
+
+Bootstrap does not create placeholder context files unless requested:
+
+```sh
+contextkit bootstrap --with-template
+```
 
 When `.git` is absent and the directory already contains files, bootstrap stops
 before project files change and asks to create a pre-bootstrap Git checkpoint.
@@ -153,10 +159,22 @@ Bootstrap a project end to end:
 contextkit bootstrap
 ```
 
-Initialize missing binding and body files:
+Initialize only the ContextKit binding:
 
 ```sh
 contextkit init
+```
+
+Create empty project layers as well:
+
+```sh
+contextkit init --with-layers
+```
+
+Create empty layers plus starter context templates:
+
+```sh
+contextkit init --with-template
 ```
 
 Adopt only the ContextKit binding in an existing project body:
@@ -164,6 +182,26 @@ Adopt only the ContextKit binding in an existing project body:
 ```sh
 contextkit adopt
 ```
+
+Adopt binding and create empty layers in an existing project body:
+
+```sh
+contextkit adopt --with-layers
+```
+
+Adopt binding and create starter context templates too:
+
+```sh
+contextkit adopt --with-template
+```
+
+Initialization modes are explicit:
+
+| Command | Creates |
+| --- | --- |
+| `contextkit init` / `contextkit adopt` | `.contextkit/config.toml`, `.contextkit/README.md`, `.gitignore` guards, `.env.local` |
+| `--with-layers` | binding plus empty `context/`, `assets/`, `routines/`, and `capabilities/` layers |
+| `--with-template` | binding, empty layers, and starter context files |
 
 Inspect a dot-folder or mixed-layout migration:
 
@@ -247,9 +285,11 @@ Standard source folders are `context/`, `assets/`, `routines/`, and
 `capabilities/`. Add a `[sources]` table only when a project deliberately
 overrides one of those paths.
 
-`.gitignore` and `.env.local` are technical bootstrap files. `contextkit init`
-creates a non-secret `.env.local` template and gitignore guards for local env,
-generated runtime context, and capability state.
+`.gitignore` and `.env.local` are technical bootstrap files. Plain
+`contextkit init` creates only the binding files, a non-secret `.env.local`
+template, and gitignore guards for local env, generated runtime context, and
+capability state. Empty source layers require `contextkit init --with-layers`.
+Starter context templates require `contextkit init --with-template`.
 
 ## Capabilities
 
@@ -266,7 +306,7 @@ audit live in the capabilities project and in capability-owned guides.
 The current implementation covers the local, repo-backed agent body:
 
 - project binding through `.contextkit/config.toml`;
-- idempotent bootstrap for git init, missing body creation, hook install,
+- idempotent bootstrap for git init, binding and empty layer creation, hook install,
   build, doctor, and audit;
 - Codex and Claude context compilation;
 - thin hook installation;

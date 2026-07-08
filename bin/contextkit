@@ -416,7 +416,7 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
             )
         _die(
             f"context source directory not found: {context_dir}\n"
-            "Run `contextkit init` to create a project skeleton.",
+            "Run `contextkit init --with-layers` to create empty project layers, or `contextkit init --with-template` to add starter context files.",
             6,
         )
     files: list[ContextFile] = []
@@ -821,6 +821,8 @@ body into Codex and Claude runtime context.
 Common commands:
 
 - `contextkit bootstrap`
+- `contextkit init --with-layers`
+- `contextkit init --with-template`
 - `contextkit build --target codex`
 - `contextkit build --target claude`
 - `contextkit build --target all`
@@ -834,7 +836,29 @@ envelopes under `capabilities/`.
 """
 
 
-def _init_project(root: Path, binding_only: bool = False) -> dict[str, Any]:
+LAYER_DIRS = [
+    ".contextkit/audits",
+    "context",
+    "assets/sessions",
+    "assets/plans",
+    "assets/research",
+    "routines",
+    "capabilities",
+]
+
+
+def _ensure_project_layers(root: Path, created: list[str], skipped: list[str]) -> None:
+    for rel in LAYER_DIRS:
+        path = root / rel
+        if path.exists():
+            skipped.append(str(path))
+        else:
+            path.mkdir(parents=True, exist_ok=True)
+            created.append(str(path))
+    _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
+
+
+def _init_project(root: Path, with_layers: bool = False, with_template: bool = False) -> dict[str, Any]:
     created: list[str] = []
     changed: list[str] = []
     skipped: list[str] = []
@@ -842,26 +866,22 @@ def _init_project(root: Path, binding_only: bool = False) -> dict[str, Any]:
     _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
     _ensure_gitignore(root, created, changed)
     _ensure_env_local(root, created, skipped)
-    if not binding_only:
-        for rel in [".contextkit/audits", "assets/sessions", "assets/plans", "assets/research",
-                    "routines", "capabilities"]:
-            path = root / rel
-            if path.exists():
-                skipped.append(str(path))
-            else:
-                path.mkdir(parents=True, exist_ok=True)
-                created.append(str(path))
-        _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
+    if with_layers or with_template:
+        _ensure_project_layers(root, created, skipped)
+    if with_template:
         for rel, body in SKELETON_FILES.items():
             _write_if_missing(root / rel, body, created, skipped)
-    elif (root / "capabilities").is_dir():
-        _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
     return {"project": str(root), "created": created, "changed": changed, "skipped": skipped}
 
 
 def cmd_init(args: argparse.Namespace) -> None:
     root = _find_project_root() if args.adopt else Path.cwd().resolve()
-    _emit(_init_project(root, args.binding_only), args.json)
+    with_layers = bool(getattr(args, "with_layers", False))
+    with_template = bool(getattr(args, "with_template", False))
+    binding_only = bool(getattr(args, "binding_only", False))
+    if binding_only and (with_layers or with_template):
+        _die("`--binding-only` is the default and cannot be combined with `--with-layers` or `--with-template`.", 2)
+    _emit(_init_project(root, with_layers=with_layers, with_template=with_template), args.json)
 
 
 def _codex_adapter() -> str:
@@ -1311,7 +1331,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     _confirm_bootstrap_conflicts(conflicts["confirm"], args.yes)
     confirmed_conflicts = conflicts["confirm"]
 
-    init = _init_project(root, binding_only=False)
+    init = _init_project(root, with_layers=True, with_template=args.with_template)
     hooks = _install_hooks(root, targets)
     build_target = _bootstrap_build_target(targets)
     written, warnings = _build_targets(root, build_target)
@@ -1846,7 +1866,7 @@ def _visible_layer_steps(root: Path, sources: dict[str, str]) -> list[MigrationS
                 title=f"Create `{visible}/`",
                 action="create",
                 status="ready",
-                detail="Layer is absent. Full `contextkit init` creates project body directories and skeleton context files.",
+                detail="Layer is absent. `contextkit init --with-layers` creates empty project body layers; `contextkit init --with-template` also creates starter context files.",
             ))
     return steps
 
@@ -1879,7 +1899,7 @@ def _bootstrap_steps(root: Path, sources: dict[str, str]) -> list[MigrationStep]
             "git mv .capabilities capabilities",
         ))
     else:
-        steps.append(MigrationStep(settings_rel.as_posix(), "create", "ready", "Missing capability gate file.", "contextkit adopt"))
+        steps.append(MigrationStep(settings_rel.as_posix(), "create", "ready", "Missing capability gate file.", "contextkit adopt --with-layers"))
 
     patterns = _gitignore_patterns(root)
     missing = [line for line in _required_gitignore_lines(capabilities_dir) if line not in patterns]
@@ -2077,10 +2097,10 @@ def cmd_guide(args: argparse.Namespace) -> None:
 
 
 def cmd_templates(_: argparse.Namespace) -> None:
-    lines = ["# ContextKit Templates", "", "Project skeleton files:", ""]
+    lines = ["# ContextKit Templates", "", "Starter context template files:", ""]
     for rel in sorted(SKELETON_FILES):
         lines.append(f"- `{rel}`")
-    lines += ["", "Run `contextkit init` to create missing binding and skeleton files."]
+    lines += ["", "Run `contextkit init --with-template` to create missing binding, layers, and starter context files."]
     _emit("\n".join(lines) + "\n")
 
 
@@ -2088,10 +2108,10 @@ HELP = """contextkit — manager for repo-backed agent project bodies and runtim
 
 Commands:
   contextkit help
-  contextkit bootstrap [--target codex|claude] [--target ...] [--yes] [--json]
+  contextkit bootstrap [--target codex|claude] [--target ...] [--with-template] [--yes] [--json]
   contextkit doctor [--json]
-  contextkit init [--binding-only] [--json]
-  contextkit adopt [--json]
+  contextkit init [--with-layers|--with-template] [--json]
+  contextkit adopt [--with-layers|--with-template] [--json]
   contextkit install-hooks --target codex|claude [--target ...]
   contextkit build --target codex|claude|all [--json]
   contextkit audit [--write] [--json]
@@ -2110,6 +2130,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("help", add_help=False).set_defaults(func=lambda _args: _emit(HELP))
     p = sub.add_parser("bootstrap")
     p.add_argument("--target", choices=["codex", "claude"], action="append")
+    p.add_argument("--with-template", action="store_true")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_bootstrap)
@@ -2119,13 +2140,19 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_doctor)
 
     p = sub.add_parser("init")
-    p.add_argument("--binding-only", action="store_true")
+    init_group = p.add_mutually_exclusive_group()
+    init_group.add_argument("--with-layers", action="store_true")
+    init_group.add_argument("--with-template", action="store_true")
+    p.add_argument("--binding-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_init, adopt=False)
+    p.set_defaults(func=cmd_init, adopt=False, binding_only=False)
 
     p = sub.add_parser("adopt")
+    adopt_group = p.add_mutually_exclusive_group()
+    adopt_group.add_argument("--with-layers", action="store_true")
+    adopt_group.add_argument("--with-template", action="store_true")
     p.add_argument("--json", action="store_true")
-    p.set_defaults(func=cmd_init, binding_only=True, adopt=True)
+    p.set_defaults(func=cmd_init, adopt=True, binding_only=False)
 
     p = sub.add_parser("install-hooks")
     p.add_argument("--target", choices=["codex", "claude"], action="append", required=True)

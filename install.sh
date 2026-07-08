@@ -89,4 +89,4 @@ case ":$PATH:" in
 esac
 
 printf 'installed: %s -> %s\n' "$BIN_DIR/contextkit" "$MANAGER"
-printf 'next:      contextkit init · contextkit build --target codex · contextkit doctor\n'
+printf 'next:      contextkit bootstrap · contextkit init --with-layers · contextkit init --with-template\n'

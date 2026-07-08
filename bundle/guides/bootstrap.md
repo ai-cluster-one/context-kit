@@ -18,6 +18,7 @@ Effects:
   `.git` is absent and the directory already contains files;
 - creates missing `.contextkit/`, `.gitignore`, `.env.local`, `context/`,
   `assets/`, `routines/`, and `capabilities/` entries;
+- creates starter context templates only when `--with-template` is passed;
 - leaves existing project body files in place;
 - installs Codex and Claude bindings;
 - builds generated runtime context;
@@ -44,14 +45,14 @@ Start inside an empty directory:
 contextkit bootstrap
 ```
 
-Created body:
+Created binding and empty body layers:
 
 - `.contextkit/config.toml`;
 - `.contextkit/README.md`;
 - `.contextkit/audits/`;
 - `.gitignore` guards;
 - `.env.local` placeholder;
-- `context/` skeleton files;
+- `context/`;
 - `assets/sessions/`, `assets/plans/`, `assets/research/`;
 - `routines/`;
 - `capabilities/settings.json`.
@@ -81,7 +82,8 @@ contextkit bootstrap
 ```
 
 Existing visible body files remain in place. Missing binding files, guards,
-host bindings, generated context, and skeleton files are added.
+host bindings, generated context, and empty layers are added. Starter context
+templates are added only when `--with-template` is passed.
 
 If `.git` is absent, bootstrap creates a checkpoint before ContextKit changes
 project files:
@@ -133,10 +135,30 @@ contextkit bootstrap --target codex --target claude
 
 ## Component Commands
 
-Create missing binding and body files:
+Create only the ContextKit binding:
 
 ```sh
 contextkit init
+```
+
+Create empty body layers without starter context templates:
+
+```sh
+contextkit init --with-layers
+```
+
+Create empty layers plus starter context templates:
+
+```sh
+contextkit init --with-template
+```
+
+Adopt the same modes from inside an existing ContextKit body:
+
+```sh
+contextkit adopt
+contextkit adopt --with-layers
+contextkit adopt --with-template
 ```
 
 Install host bindings:
