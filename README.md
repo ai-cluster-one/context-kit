@@ -2,7 +2,7 @@
 
 ContextKit turns a Git repository into an agent-ready project.
 
-It gives agents a stable project body: live context, supporting evidence, repeatable routines, tool metadata when tools are enabled, and generated runtime context for hosts such as Codex and Claude.
+It gives agents a stable project body: live context, provisional cross-session memory, supporting evidence, repeatable routines, tool metadata when tools are enabled, and generated runtime context for hosts such as Codex and Claude.
 
 Use ContextKit when multiple agents, hosts, or sessions need the same source of truth for how a project works and how agent context is delivered.
 
@@ -11,9 +11,10 @@ Use ContextKit when multiple agents, hosts, or sessions need the same source of 
 - a visible project structure for agent context;
 - generated runtime context for Codex and Claude;
 - optional global context shared by multiple projects;
+- optional provider-neutral project memory;
 - always-on operating runtime loaded from the ContextKit bundle;
 - generated guide menu in runtime context;
-- on-demand guides for authoring, global context, validation, audits, routines, assets, migration, hooks, and destructive operations;
+- on-demand guides for authoring, global context, memory, validation, audits, routines, assets, migration, hooks, and destructive operations;
 - starter context templates for project onboarding;
 - advisory audits that point to the rule source for each finding;
 - generated runtime context rebuilt from source, never edited by hand.
@@ -75,6 +76,8 @@ context/
   identity/
   guidelines/
   architecture/
+# Created only after the first memory capture or import:
+memory/
 assets/
   sessions/
   plans/
@@ -92,6 +95,7 @@ Layer roles:
 - `.contextkit/` - technical binding, config, and ContextKit-native audit reports;
 - `context/` - live project doctrine and routing surface;
 - configured global context - live doctrine inherited by every project that opts into the external source;
+- `memory/` - provisional project knowledge retained across sessions until it reaches a durable owner;
 - `assets/` - evidence, plans, research, and session history;
 - `routines/` - repeatable procedures surfaced into runtime context;
 - `capabilities/` - project envelopes for enabled tools;
@@ -110,7 +114,7 @@ ContextKit separates the sources it ships:
 
 ## Runtime Context
 
-ContextKit compiles project context and an optional configured global context source into host-specific generated context:
+ContextKit compiles project context, project memory when present, and an optional configured global context source into host-specific generated context:
 
 - Codex: `.codex/generated/context.md`
 - Claude: `.claude/rules/CONTEXT.md`
@@ -145,6 +149,24 @@ order: 100
 Use `contextkit guide authoring` for placement, naming, load modes, and quality rules.
 
 Use `contextkit guide global-context` before placing doctrine that should be inherited unchanged by multiple projects.
+
+## Project Memory
+
+Use ContextKit memory when a session produces project-relevant knowledge that future sessions must account for before it is ready for durable context, evidence, procedure, or tool ownership.
+
+Capture a note with the live command contract:
+
+```sh
+contextkit memory add --help
+```
+
+Return the exact memory block used by the context compiler:
+
+```sh
+contextkit memory context
+```
+
+The memory directory is absent until the first add or import. It defaults to project-local `memory/`. Set `CONTEXTKIT_MEMORY_DIR` to a dedicated persistent mount when deployment replaces the project filesystem. Use `contextkit memory status` to verify the active source and `contextkit guide memory` for capture, import, and grooming judgment.
 
 ## Core Commands
 
@@ -197,6 +219,8 @@ Initialization modes are explicit:
 | `contextkit init` / `contextkit adopt` | `.contextkit/config.toml`, `.contextkit/README.md`, `.gitignore` guards, `.env.local` |
 | `--with-layers`                        | binding plus empty `context/`, `assets/`, `routines/`, and `capabilities/` layers     |
 | `--with-template`                      | binding, empty layers, and starter context files                                      |
+
+Initialization never creates an empty `memory/` directory. The first memory add or import creates it.
 
 Inspect a dot-folder or mixed-layout migration:
 
@@ -291,7 +315,7 @@ output = ".codex/generated/context.md"
 output = ".claude/rules/CONTEXT.md"
 ```
 
-Default project source folders are `context/`, `assets/`, `routines/`, and `capabilities/`. `sources.global_context` is an explicit opt-in to one external shared-doctrine directory; omit it when the project has no global source.
+Default static project source folders are `context/`, `assets/`, `routines/`, and `capabilities/`. Project memory uses lazy `memory/` unless `CONTEXTKIT_MEMORY_DIR` selects a persistent root. `sources.global_context` is an explicit opt-in to one external shared-doctrine directory; omit it when the project has no global source.
 
 `.gitignore` and `.env.local` are technical bootstrap files. Plain `contextkit init` creates only the binding files, a non-secret `.env.local` template, and gitignore guards for local env, generated runtime context, and capability state. Empty source layers require `contextkit init --with-layers`. Starter context templates require `contextkit init --with-template`.
 
@@ -309,6 +333,7 @@ The current implementation covers the local, repo-backed agent body:
 - idempotent bootstrap for git init, binding and empty layer creation, hook install, build, doctor, and audit;
 - Codex and Claude context compilation;
 - optional recursive global-context compilation from `sources.global_context`;
+- lazy provider-neutral project memory with capture, full-block rendering, search, status, import, and recursive inline compilation;
 - thin hook installation;
 - routine index inclusion from `routines/**/*.md` front matter;
 - capability index inclusion from `capabilities/settings.json`, installed capability snapshots, and visible project envelopes;

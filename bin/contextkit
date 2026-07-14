@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import hashlib
 import json
 import os
 import re
@@ -42,11 +43,14 @@ CAP_HOME = Path(os.environ.get("CAPABILITIES_HOME") or (Path.home() / ".capabili
 BUNDLE_REL = Path("bundle")
 GUIDES_REL = Path("guides")
 TEMPLATES_REL = Path("templates")
+MEMORY_REL = Path("memory")
+MEMORY_DIR_ENV = "CONTEXTKIT_MEMORY_DIR"
 LEGACY_DOCTRINE_REL = Path("doctrine")
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
     "global-context",
+    "memory",
     "validation",
     "assets",
     "routines",
@@ -95,6 +99,20 @@ class ContextFile:
     body: str
     raw_frontmatter: dict[str, str]
     source: str = "project"
+
+
+@dataclass(frozen=True)
+class MemoryFile:
+    path: Path
+    rel: Path
+    body: str
+
+
+@dataclass(frozen=True)
+class MemoryLocation:
+    path: Path
+    reference: str
+    external: bool
 
 
 @dataclass
@@ -811,6 +829,124 @@ def _capability_index(root: Path, capabilities_dir: Path, warnings: list[str]) -
     return "\n".join(lines)
 
 
+MEMORY_ID_PATTERN = re.compile(r"(?m)^<!-- contextkit-memory-id: ([0-9a-f]{64}) -->\n?")
+
+
+def _memory_location(root: Path) -> MemoryLocation:
+    raw = os.environ.get(MEMORY_DIR_ENV)
+    if raw is None or not raw.strip():
+        location = MemoryLocation(root / MEMORY_REL, MEMORY_REL.as_posix(), False)
+    else:
+        expanded = os.path.expandvars(raw.strip())
+        if re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})", expanded):
+            _die(
+                f"unresolved environment variable in {MEMORY_DIR_ENV}: {raw}\n"
+                f"Set {MEMORY_DIR_ENV} to the project memory directory before running ContextKit.",
+                6,
+            )
+        candidate = Path(expanded).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        location = MemoryLocation(candidate.resolve(), f"${MEMORY_DIR_ENV}", True)
+
+    resolved = location.path.resolve()
+    project_root = root.resolve()
+    if location.external and (resolved == project_root or resolved in project_root.parents):
+        _die(
+            f"invalid {MEMORY_DIR_ENV}: {raw}\n"
+            "The memory source must be a dedicated directory, not the project root or one of its ancestors.",
+            6,
+        )
+    cfg = _config(root)
+    protected: list[tuple[str, Path]] = [
+        *[(f"sources.{name}", (root / rel).resolve()) for name, rel in cfg["sources"].items()],
+        *[(f"targets.{name}", (root / rel).resolve()) for name, rel in cfg["targets"].items()],
+    ]
+    global_context: Path | None = cfg["global_context"]
+    if global_context is not None:
+        protected.append(("sources.global_context", global_context.resolve()))
+    for owner, protected_path in protected:
+        if resolved == protected_path or resolved in protected_path.parents or protected_path in resolved.parents:
+            _die(
+                f"invalid active memory root: {location.reference} overlaps {owner} at {protected_path}\n"
+                "Choose a dedicated memory directory so one Markdown tree cannot belong to two ContextKit layers.",
+                6,
+            )
+    active_path = resolved if location.external else location.path
+    return MemoryLocation(active_path, location.reference, location.external)
+
+
+def _memory_reference(location: MemoryLocation, path: Path) -> str:
+    try:
+        relative = path.absolute().relative_to(location.path.absolute())
+    except ValueError:
+        _die(f"memory path escapes the configured memory tree: {path}", 6)
+    return (Path(location.reference) / relative).as_posix()
+
+
+def _assert_memory_write_path(location: MemoryLocation, path: Path) -> None:
+    base = location.path
+    try:
+        relative = path.absolute().relative_to(base.absolute())
+    except ValueError:
+        _die(f"memory destination escapes the configured memory tree: {path}", 6)
+    if not location.external and base.is_symlink():
+        _die(f"project memory path must not be a symlink: {base}\nUse `contextkit guide memory` for the memory contract.", 6)
+    cursor = base
+    for part in relative.parts:
+        cursor = cursor / part
+        if cursor.is_symlink():
+            _die(f"memory paths must not be symlinks: {cursor}\nUse `contextkit guide memory` for the memory contract.", 6)
+    resolved_parent = path.parent.resolve()
+    resolved_base = base.resolve()
+    if resolved_parent != resolved_base and resolved_base not in resolved_parent.parents:
+        _die(f"memory destination resolves outside the configured memory tree: {path}", 6)
+
+
+def _collect_memory(root: Path) -> list[MemoryFile]:
+    location = _memory_location(root)
+    base = location.path
+    if not location.external and base.is_symlink():
+        _die(f"project memory path must not be a symlink: {base}\nUse `contextkit guide memory` for the memory contract.", 6)
+    if not base.exists():
+        return []
+    if not base.is_dir():
+        _die(f"project memory path is not a directory: {base}\nUse `contextkit guide memory` for the memory contract.", 6)
+    files: list[MemoryFile] = []
+    entries = sorted(base.rglob("*"))
+    symlinks = [path for path in entries if path.is_symlink()]
+    if symlinks:
+        _die(f"memory paths must not be symlinks: {symlinks[0]}\nUse `contextkit guide memory` for the memory contract.", 6)
+    for path in (path for path in entries if path.is_file() and path.suffix.lower() == ".md"):
+        try:
+            body = path.read_text()
+        except (OSError, UnicodeError) as exc:
+            _die(f"cannot read project memory file {path}: {exc}", 6)
+        files.append(MemoryFile(path=path, rel=Path(_memory_reference(location, path)), body=body))
+    return files
+
+
+def _memory_body_for_context(body: str) -> str:
+    return MEMORY_ID_PATTERN.sub("", body).strip()
+
+
+def _render_memory_block(root: Path) -> tuple[str, list[MemoryFile]]:
+    files = _collect_memory(root)
+    if not files:
+        return "", files
+    lines = [
+        "# Project Memory",
+        "",
+        "This generated block projects the memory source files named below. Use `contextkit guide memory` to judge or groom this material.",
+        "",
+    ]
+    for item in files:
+        lines += [f"## Memory Source: `{item.rel.as_posix()}`", ""]
+        body = _memory_body_for_context(item.body)
+        lines += [body if body else "(empty memory file)", ""]
+    return "\n".join(lines).rstrip() + "\n", files
+
+
 def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     cfg = _config(root)
     sources = cfg["sources"]
@@ -831,6 +967,8 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     stubs = [item for item in files if item.load == "stub"]
     routine_index = _routine_index(root, routines_dir, warnings)
     capability_index = _capability_index(root, capabilities_dir, warnings)
+    memory_block, memory_files = _render_memory_block(root)
+    memory_location = _memory_location(root)
 
     title = "Codex" if target == "codex" else "Claude"
     out: list[str] = [f"# {title} Context", "", _generated_block(target), ""]
@@ -839,6 +977,8 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         "",
         f"- Project context: `{context_dir.as_posix()}`",
     ]
+    if memory_files:
+        out.append(f"- Project memory: `{memory_location.reference}`")
     if global_context is not None:
         out.append(f"- Global context: `{global_context}`")
     out += [
@@ -848,6 +988,8 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         f"- Inline files: {len(inline)}",
         f"- Stub files: {len(stubs)}",
     ]
+    if memory_files:
+        out.append(f"- Memory files: {len(memory_files)}")
     if global_context is not None:
         out += [
             f"- Global inline files: {sum(item.source == 'global' for item in inline)}",
@@ -870,9 +1012,10 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         "",
         "---",
         "",
-        "# Inline Context",
-        "",
     ]
+    if memory_block:
+        out += [memory_block.strip(), "", "---", ""]
+    out += ["# Inline Context", ""]
     if inline:
         for item in inline:
             source_label = "Global Source" if item.source == "global" else "Source"
@@ -906,6 +1049,19 @@ def cmd_build(args: argparse.Namespace) -> None:
     _emit({"project": str(root), "written": written, "warnings": warnings_by_target}, args.json)
 
 
+def _codex_context_limit(root: Path) -> int | None:
+    path = root / ".codex" / "config.toml"
+    if not path.exists():
+        return None
+    _text, raw = _codex_top_level_config(path)
+    value = raw.get("project_doc_max_bytes")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        _die(f"invalid project_doc_max_bytes in {path}: expected a positive integer", 6)
+    return value
+
+
 def _build_targets(root: Path, target: str) -> tuple[dict[str, str], dict[str, list[str]]]:
     cfg = _config(root)
     targets = ["codex", "claude"] if target == "all" else [target]
@@ -913,6 +1069,16 @@ def _build_targets(root: Path, target: str) -> tuple[dict[str, str], dict[str, l
     warnings_by_target: dict[str, list[str]] = {}
     for item in targets:
         text, warnings = _compose_context(root, item)
+        if item == "codex":
+            limit = _codex_context_limit(root)
+            size = len(text.encode())
+            if limit is not None and size > limit:
+                _die(
+                    f"generated Codex context is {size} bytes, but project_doc_max_bytes is {limit} in .codex/config.toml\n"
+                    "ContextKit will not write a target that Codex may truncate. Groom project memory or raise the reviewed Codex limit, then rebuild.\n"
+                    "Rule sources: `contextkit guide memory`; `contextkit guide hooks`.",
+                    6,
+                )
         output = root / cfg["targets"][item]
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", delete=False, dir=str(output.parent)) as tmp:
@@ -923,6 +1089,226 @@ def _build_targets(root: Path, target: str) -> tuple[dict[str, str], dict[str, l
         written[item] = str(output)
         warnings_by_target[item] = warnings
     return written, warnings_by_target
+
+
+def _atomic_write_text(path: Path, body: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    mode = path.stat().st_mode if path.exists() else 0o644
+    with tempfile.NamedTemporaryFile("w", delete=False, dir=str(path.parent)) as tmp:
+        tmp.write(body)
+        tmp_path = Path(tmp.name)
+    tmp_path.replace(path)
+    path.chmod(mode)
+
+
+def _memory_entry_id(body: str) -> str:
+    return hashlib.sha256(body.strip().encode()).hexdigest()
+
+
+def _memory_result_with_build(root: Path, result: dict[str, Any]) -> dict[str, Any]:
+    try:
+        written, warnings = _build_targets(root, "all")
+    except ContextKitError as exc:
+        path = result.get("path") or _memory_location(root).reference
+        _die(f"memory is present at {path}, but generated context could not be rebuilt: {exc}", exc.exit_code)
+    result["written_targets"] = written
+    result["warnings"] = warnings
+    return result
+
+
+def cmd_memory_add(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    location = _memory_location(root)
+    if args.stdin and args.text is not None:
+        _die("provide memory text either as an argument or with `--stdin`, not both", 2)
+    body = sys.stdin.read() if args.stdin else (args.text or "")
+    body = body.strip()
+    if not body:
+        _die("memory text is empty; pass text or use `--stdin`", 2)
+    entry_id = _memory_entry_id(body)
+    marker = f"<!-- contextkit-memory-id: {entry_id} -->"
+    for item in _collect_memory(root):
+        if marker in item.body:
+            result = {
+                "project": str(root),
+                "status": "skipped",
+                "reason": "identical memory already exists",
+                "path": item.rel.as_posix(),
+                "memory_directory": str(location.path),
+                "entry_id": entry_id,
+            }
+            _emit(_memory_result_with_build(root, result), args.json)
+            return
+
+    now = _dt.datetime.now().astimezone()
+    relative = Path(f"{now.date().isoformat()}.md")
+    path = location.path / relative
+    _assert_memory_write_path(location, path)
+    existing = path.read_text() if path.exists() else f"# {now.date().isoformat()}\n"
+    heading = f"## {now.strftime('%H:%M')}"
+    if args.title:
+        heading += f" — {_one_line(args.title)}"
+    addition = f"\n{marker}\n{heading}\n\n{body}\n"
+    _atomic_write_text(path, existing.rstrip() + "\n" + addition)
+    result = {
+        "project": str(root),
+        "status": "created",
+        "path": _memory_reference(location, path),
+        "memory_directory": str(location.path),
+        "entry_id": entry_id,
+        "current_session": "continue with the captured fact; restart is not required",
+    }
+    _emit(_memory_result_with_build(root, result), args.json)
+
+
+def cmd_memory_context(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    block, files = _render_memory_block(root)
+    if args.json:
+        _emit({
+            "project": str(root),
+            "files": [item.rel.as_posix() for item in files],
+            "context": block,
+        }, True)
+        return
+    sys.stdout.write(block)
+
+
+def cmd_memory_search(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    needle = args.query.casefold()
+    matches: list[dict[str, Any]] = []
+    for item in _collect_memory(root):
+        for line_number, line in enumerate(item.body.splitlines(), start=1):
+            if re.fullmatch(r"<!-- contextkit-memory-id: [0-9a-f]{64} -->", line.strip()):
+                continue
+            if needle in line.casefold():
+                matches.append({"path": item.rel.as_posix(), "line": line_number, "text": line})
+    result = {"project": str(root), "query": args.query, "matches": matches}
+    if args.json:
+        _emit(result, True)
+        return
+    if not matches:
+        _emit("No memory matches.")
+        return
+    _emit("\n".join(f"{item['path']}:{item['line']}: {item['text']}" for item in matches))
+
+
+def cmd_memory_status(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    location = _memory_location(root)
+    files = _collect_memory(root)
+    result = {
+        "project": str(root),
+        "source": location.reference,
+        "directory": str(location.path),
+        "external": location.external,
+        "present": location.path.is_dir(),
+        "files": len(files),
+        "characters": sum(len(item.body) for item in files),
+        "paths": [item.rel.as_posix() for item in files],
+        "rule_source": "contextkit guide memory",
+    }
+    if args.json:
+        _emit(result, True)
+        return
+    lines = [
+        "# ContextKit Memory Status",
+        "",
+        f"Project: `{root}`",
+        f"Source: `{result['source']}`",
+        f"Directory: `{result['directory']}`",
+        f"Storage: {'environment-configured' if result['external'] else 'project-local'}",
+        f"State: {'present' if result['present'] else 'absent (valid until first add or import)'}",
+        f"Markdown files: {result['files']}",
+        f"Characters: {result['characters']}",
+        "Rule source: `contextkit guide memory`",
+    ]
+    if files:
+        lines += ["", "Files:", *[f"- `{item.rel.as_posix()}`" for item in files]]
+    _emit("\n".join(lines) + "\n")
+
+
+def _memory_import_plan(root: Path, source: Path, provider: str) -> dict[str, Any]:
+    try:
+        source = source.expanduser().resolve(strict=True)
+    except OSError as exc:
+        _die(f"memory import source is unavailable: {source}: {exc}", 6)
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", provider):
+        _die("provider must contain only letters, digits, dots, underscores, or hyphens", 2)
+    location = _memory_location(root)
+    destination_root = location.path / "imports" / provider
+    if source == destination_root or destination_root in source.parents or source in destination_root.parents:
+        _die("memory import source and destination must not overlap", 6)
+    if source.is_file():
+        candidates = [source] if source.suffix.lower() == ".md" else []
+        source_root = source.parent
+    elif source.is_dir():
+        source_entries = sorted(source.rglob("*"))
+        source_symlinks = [path for path in source_entries if path.is_symlink()]
+        if source_symlinks:
+            _die(f"memory import sources must not contain symlinks: {source_symlinks[0]}", 6)
+        candidates = [path for path in source_entries if path.is_file() and path.suffix.lower() == ".md"]
+        source_root = source
+    else:
+        _die(f"memory import source is not a file or directory: {source}", 6)
+
+    entries: list[dict[str, str]] = []
+    for candidate in candidates:
+        try:
+            body = candidate.read_text()
+        except (OSError, UnicodeError) as exc:
+            _die(f"cannot read memory import source {candidate}: {exc}", 6)
+        relative = Path(candidate.name) if source.is_file() else candidate.relative_to(source_root)
+        destination = destination_root / relative
+        _assert_memory_write_path(location, destination)
+        if not destination.exists():
+            status = "create"
+        elif destination.is_file() and destination.read_text() == body:
+            status = "skip"
+        else:
+            status = "conflict"
+        entries.append({
+            "source": str(candidate),
+            "destination": _memory_reference(location, destination),
+            "destination_path": str(destination),
+            "status": status,
+        })
+    return {
+        "project": str(root),
+        "provider": provider,
+        "source": str(source),
+        "destination": _memory_reference(location, destination_root),
+        "memory_directory": str(location.path),
+        "entries": entries,
+    }
+
+
+def cmd_memory_import(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    location = _memory_location(root)
+    plan = _memory_import_plan(root, Path(args.source), args.provider)
+    plan["mode"] = "apply" if args.apply else "plan"
+    if args.plan:
+        _emit(plan, args.json)
+        return
+    conflicts = [item for item in plan["entries"] if item["status"] == "conflict"]
+    if conflicts:
+        _die("memory import blocked by destination conflicts; review `contextkit memory import --plan` output", 6)
+    created: list[str] = []
+    for item in plan["entries"]:
+        if item["status"] != "create":
+            continue
+        source = Path(item["source"])
+        destination = Path(item["destination_path"])
+        _assert_memory_write_path(location, destination)
+        _atomic_write_text(destination, source.read_text())
+        created.append(item["destination"])
+    plan["created"] = created
+    plan["skipped"] = [item["destination"] for item in plan["entries"] if item["status"] == "skip"]
+    if created:
+        plan = _memory_result_with_build(root, plan)
+    _emit(plan, args.json)
 
 
 def _write_if_missing(path: Path, body: str, created: list[str], skipped: list[str]) -> None:
@@ -992,7 +1378,7 @@ output = ".claude/rules/CONTEXT.md"
 def _binding_readme() -> str:
     return """# ContextKit Binding
 
-This repository is managed by ContextKit, a local manager for agent project structure and runtime context.
+This repository is managed by ContextKit, a local manager for agent project structure, project memory, and runtime context.
 
 The agent body stays in this repository: live context, supporting assets,
 repeatable routines, and capability envelopes. ContextKit owns the shape,
@@ -1011,8 +1397,9 @@ Common commands:
 - `contextkit audit`
 - `contextkit guide authoring`
 - `contextkit guide global-context`
+- `contextkit guide memory`
 
-Add durable project context under `context/`. Configure optional cross-project doctrine with `sources.global_context`. Put historical or supporting material under `assets/`. Put repeatable procedures under `routines/`. Put installed tool envelopes under `capabilities/`.
+Add durable project context under `context/`. Configure optional cross-project doctrine with `sources.global_context`. Use `contextkit guide memory` before adding project memory. Put historical or supporting material under `assets/`. Put repeatable procedures under `routines/`. Put installed tool envelopes under `capabilities/`.
 """
 
 
@@ -1119,42 +1506,135 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
+def _nested_toml_key_paths(value: Any, key: str, prefix: tuple[str, ...] = ()) -> list[str]:
+    if not isinstance(value, dict):
+        return []
+    paths: list[str] = []
+    for name, child in value.items():
+        current = (*prefix, name)
+        if name == key and prefix:
+            paths.append(".".join(current))
+        paths += _nested_toml_key_paths(child, key, current)
+    return paths
+
+
+def _codex_top_level_config(path: Path) -> tuple[str, dict[str, Any]]:
+    if not path.exists():
+        return "", {}
+    text = path.read_text()
+    raw = _load_toml(path)
+    for key in ("project_doc_fallback_filenames", "project_doc_max_bytes"):
+        nested = _nested_toml_key_paths(raw, key)
+        if nested:
+            _die(
+                f"Codex setting {key} must be top-level in {path}; found: {', '.join(nested)}\n"
+                "ContextKit preserved the existing config. Move the setting to the top level, then install the Codex hook again.",
+                6,
+            )
+    return text, raw
+
+
+def _insert_top_level_toml(text: str, additions: list[str]) -> str:
+    if not additions:
+        return text if text.endswith("\n") else text + "\n"
+    lines = text.splitlines()
+    table_index = next((index for index, line in enumerate(lines) if re.match(r"\s*\[", line)), len(lines))
+    before = lines[:table_index]
+    after = lines[table_index:]
+    if before and before[-1].strip():
+        before.append("")
+    before += additions
+    if after:
+        before.append("")
+    return "\n".join([*before, *after]).rstrip() + "\n"
+
+
+def _planned_codex_config(path: Path, context_rel: str) -> tuple[str, bool]:
+    config_text, config_raw = _codex_top_level_config(path)
+    additions: list[str] = []
+    fallback = config_raw.get("project_doc_fallback_filenames")
+    if fallback is None:
+        additions.append(f'project_doc_fallback_filenames = ["{context_rel}"]')
+    elif not isinstance(fallback, list) or not all(isinstance(item, str) for item in fallback):
+        _die(f"Codex project_doc_fallback_filenames must be a top-level string array: {path}\nContextKit preserved the existing config.", 6)
+    elif context_rel not in fallback:
+        _die(
+            f"Codex project_doc_fallback_filenames does not include {context_rel}: {path}\n"
+            "ContextKit preserved the existing config. Add the generated target to the top-level array, then install the hook again.",
+            6,
+        )
+    max_bytes = config_raw.get("project_doc_max_bytes")
+    if max_bytes is None:
+        additions.append("project_doc_max_bytes = 131072")
+    elif isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
+        _die(f"Codex project_doc_max_bytes must be a positive top-level integer: {path}\nContextKit preserved the existing config.", 6)
+    next_config = _insert_top_level_toml(config_text, additions)
+    return next_config, next_config != config_text
+
+
+def _validated_session_hooks(container: dict[str, Any], path: Path, label: str) -> list[dict[str, Any]]:
+    if "hooks" not in container:
+        return []
+    hooks = container["hooks"]
+    if not isinstance(hooks, dict):
+        _die(f"{label} hooks must be a JSON object: {path}\nContextKit preserved the existing file.", 6)
+    if "SessionStart" not in hooks:
+        return []
+    session = hooks["SessionStart"]
+    if not isinstance(session, list):
+        _die(f"{label} hooks.SessionStart must be a JSON array: {path}\nContextKit preserved the existing file.", 6)
+    for entry in session:
+        if not isinstance(entry, dict):
+            _die(f"{label} SessionStart entries must be JSON objects: {path}\nContextKit preserved the existing file.", 6)
+        entry_hooks = entry.get("hooks", [])
+        if not isinstance(entry_hooks, list):
+            _die(f"{label} SessionStart entry hooks must be a JSON array: {path}\nContextKit preserved the existing file.", 6)
+        for hook in entry_hooks:
+            if not isinstance(hook, dict):
+                _die(f"{label} hook entries must be JSON objects: {path}\nContextKit preserved the existing file.", 6)
+            if "command" in hook and not isinstance(hook["command"], str):
+                _die(f"{label} hook commands must be strings: {path}\nContextKit preserved the existing file.", 6)
+    return session
+
+
+def _json_object_for_update(path: Path, label: str) -> tuple[dict[str, Any], bool]:
+    existed = path.exists()
+    value = _read_json(path)
+    if existed and not isinstance(value, dict):
+        _die(f"{label} must be a valid JSON object: {path}\nContextKit preserved the existing file.", 6)
+    return (value if existed else {}), existed
+
+
+def _preflight_codex_binding(root: Path) -> tuple[Path, str, bool, Path, dict[str, Any]]:
+    config = root / ".codex" / "config.toml"
+    next_config, changed_config = _planned_codex_config(config, DEFAULT_TARGETS["codex"].as_posix())
+    hooks_path = root / ".codex" / "hooks.json"
+    hooks, _existed = _json_object_for_update(hooks_path, "Codex hooks")
+    _validated_session_hooks(hooks, hooks_path, "Codex")
+    return config, next_config, changed_config, hooks_path, hooks
+
+
+def _preflight_claude_binding(root: Path) -> tuple[Path, dict[str, Any], bool]:
+    settings_file = root / ".claude" / "settings.json"
+    settings, existed = _json_object_for_update(settings_file, "Claude settings")
+    _validated_session_hooks(settings, settings_file, "Claude")
+    return settings_file, settings, existed
+
+
 def _wire_codex(root: Path) -> dict[str, Any]:
     build = root / ".codex" / "hooks" / "build-context.sh"
-    build.parent.mkdir(parents=True, exist_ok=True)
     existing = build.read_text() if build.exists() else None
     body = _codex_adapter()
+
+    config, next_config, changed_config, hooks_path, hooks = _preflight_codex_binding(root)
+
+    build.parent.mkdir(parents=True, exist_ok=True)
     build.write_text(body)
     build.chmod(build.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-    config = root / ".codex" / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
-    context_rel = DEFAULT_TARGETS["codex"].as_posix()
-    if config.exists():
-        text = config.read_text()
-        changed_config = False
-        if "project_doc_fallback_filenames" not in text:
-            text = text.rstrip() + f'\nproject_doc_fallback_filenames = ["{context_rel}"]\n'
-            changed_config = True
-        elif context_rel not in text:
-            text = text.rstrip() + f'\n# ContextKit output: {context_rel}\n'
-            changed_config = True
-        if "project_doc_max_bytes" not in text:
-            text = text.rstrip() + "\nproject_doc_max_bytes = 131072\n"
-            changed_config = True
-        if changed_config:
-            config.write_text(text if text.endswith("\n") else text + "\n")
-    else:
-        config.write_text(
-            f'project_doc_fallback_filenames = ["{context_rel}"]\n'
-            "project_doc_max_bytes = 131072\n"
-        )
-        changed_config = True
+    if changed_config or not config.exists():
+        config.write_text(next_config)
 
-    hooks_path = root / ".codex" / "hooks.json"
-    hooks = _read_json(hooks_path)
-    if not isinstance(hooks, dict):
-        hooks = {}
     session = hooks.setdefault("hooks", {}).setdefault("SessionStart", [])
     command = (
         "/bin/bash -lc 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); "
@@ -1184,10 +1664,11 @@ def _wire_codex(root: Path) -> dict[str, Any]:
 
 
 def _wire_claude(root: Path) -> dict[str, Any]:
-    settings_file = root / ".claude" / "settings.json"
-    settings = _read_json(settings_file)
-    if not isinstance(settings, dict):
-        settings = {}
+    settings_file, settings, settings_existed = _preflight_claude_binding(root)
+    auto_memory_disabled = False
+    if not settings_existed:
+        settings["autoMemoryEnabled"] = False
+        auto_memory_disabled = True
     session = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
     command = (
         "/bin/bash -lc 'root=$(git rev-parse --show-toplevel 2>/dev/null || pwd); "
@@ -1210,11 +1691,20 @@ def _wire_claude(root: Path) -> dict[str, Any]:
         session.append({"hooks": [{"type": "command", "command": command}]})
         hook_added = True
     _write_json(settings_file, settings)
-    return {"settings": str(settings_file), "hook_added": hook_added, "hook_changed": hook_changed}
+    return {
+        "settings": str(settings_file),
+        "hook_added": hook_added,
+        "hook_changed": hook_changed,
+        "auto_memory_disabled": auto_memory_disabled,
+    }
 
 
 def _install_hooks(root: Path, targets: list[str]) -> dict[str, Any]:
     result: dict[str, Any] = {"project": str(root)}
+    if "codex" in targets:
+        _preflight_codex_binding(root)
+    if "claude" in targets:
+        _preflight_claude_binding(root)
     if "codex" in targets:
         result["codex"] = _wire_codex(root)
     if "claude" in targets:
@@ -1384,6 +1874,17 @@ def _json_object_blocker(root: Path, rel: Path, label: str, blockers: list[str])
         blockers.append(f"{label} must be a JSON object: {rel.as_posix()}")
 
 
+def _hook_shape_blocker(root: Path, rel: Path, label: str, blockers: list[str]) -> None:
+    path = root / rel
+    value = _read_json(path)
+    if not isinstance(value, dict):
+        return
+    try:
+        _validated_session_hooks(value, path, label)
+    except ContextKitError as exc:
+        blockers.append(str(exc))
+
+
 def _bootstrap_conflicts(root: Path, targets: list[str]) -> dict[str, list[Any]]:
     blockers: list[str] = []
     confirm: list[dict[str, str]] = []
@@ -1407,6 +1908,10 @@ def _bootstrap_conflicts(root: Path, targets: list[str]) -> dict[str, list[Any]]
         blockers.append(f"legacy dot body layer present: {rel} -> {rel[1:]}; run `contextkit migrate --plan`")
 
     if "codex" in targets:
+        try:
+            _planned_codex_config(root / ".codex" / "config.toml", DEFAULT_TARGETS["codex"].as_posix())
+        except ContextKitError as exc:
+            blockers.append(str(exc))
         adapter = root / ".codex" / "hooks" / "build-context.sh"
         if adapter.exists() and not adapter.is_file():
             blockers.append(".codex/hooks/build-context.sh exists and is not a file")
@@ -1424,9 +1929,11 @@ def _bootstrap_conflicts(root: Path, targets: list[str]) -> dict[str, list[Any]]
                         "action": "replace with ContextKit adapter",
                     })
         _json_object_blocker(root, Path(".codex") / "hooks.json", "Codex hooks", blockers)
+        _hook_shape_blocker(root, Path(".codex") / "hooks.json", "Codex", blockers)
 
     if "claude" in targets:
         _json_object_blocker(root, Path(".claude") / "settings.json", "Claude settings", blockers)
+        _hook_shape_blocker(root, Path(".claude") / "settings.json", "Claude", blockers)
 
     return {"blockers": blockers, "confirm": confirm}
 
@@ -1525,7 +2032,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     build_target = _bootstrap_build_target(targets)
     written, warnings = _build_targets(root, build_target)
     doctor = _doctor_report(root)
-    findings = _audit_context_files(root)
+    findings = _project_audit_findings(root)
     audit = {
         "project": str(root),
         "rule_source": "contextkit guide audit",
@@ -1760,9 +2267,9 @@ def _hard_wrapped_prose_hint(text: str) -> str | None:
     return None
 
 
-def _normalized_claims(item: ContextFile) -> list[str]:
+def _normalized_claim_text(text: str) -> list[str]:
     claims: list[str] = []
-    for raw in re.split(r"[\n.]", item.body):
+    for raw in re.split(r"[\n.]", text):
         line = re.sub(r"\s+", " ", raw.strip().lower())
         line = re.sub(r"[`*_>#-]", "", line).strip()
         if not line:
@@ -1772,6 +2279,10 @@ def _normalized_claims(item: ContextFile) -> list[str]:
         if line.startswith(("the ", "a ", "an ")) or any(ch.isalpha() for ch in line):
             claims.append(line)
     return claims
+
+
+def _normalized_claims(item: ContextFile) -> list[str]:
+    return _normalized_claim_text(item.body)
 
 
 def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Finding]:
@@ -1904,6 +2415,126 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
     return findings
 
 
+def _live_context_claim_owners(root: Path) -> dict[str, list[str]]:
+    cfg = _config(root)
+    context_dir = Path(cfg["sources"]["context"])
+    sourced_paths: list[tuple[Path, str]] = [
+        (path, "project") for path in sorted((root / context_dir).rglob("*.md"))
+    ]
+    global_context: Path | None = cfg["global_context"]
+    if global_context is not None and global_context.is_dir():
+        sourced_paths += [(path, "global") for path in sorted(global_context.rglob("*.md"))]
+    owners: dict[str, list[str]] = {}
+    for path, source in sourced_paths:
+        item, errors = _read_context_file(root, path, source)
+        if errors or item is None:
+            continue
+        for claim in _normalized_claims(item):
+            owners.setdefault(claim, []).append(item.rel.as_posix())
+    return owners
+
+
+def _audit_memory(root: Path, paths: list[Path] | None = None) -> list[Finding]:
+    location = _memory_location(root)
+    base = location.path
+    findings: list[Finding] = []
+    if paths is None and not location.external and base.is_symlink():
+        return [Finding(
+            "error", "memory-symlink", location.reference,
+            "Project-local memory must not be a symlink.",
+            f"Remove the symlink or configure an intentional external root through {MEMORY_DIR_ENV}.",
+            "contextkit guide memory",
+        )]
+    if paths is None and not base.exists():
+        return []
+    if paths is None:
+        if not base.is_dir():
+            return [Finding(
+                "error", "memory-path", location.reference,
+                "Project memory path is not a directory.",
+                "Replace the path with a directory or remove it before the first memory capture.",
+                "contextkit guide memory",
+            )]
+        entries = sorted(base.rglob("*"))
+        symlinks = [path for path in entries if path.is_symlink()]
+        for path in symlinks:
+            findings.append(Finding(
+                "error", "memory-symlink", _memory_reference(location, path),
+                "Memory paths must not be symlinks because they can escape the configured memory tree.",
+                "Replace the symlink with an ordinary Markdown file or directory inside the configured memory root.",
+                "contextkit guide memory",
+            ))
+        all_files = [path for path in entries if not path.is_symlink() and path.is_file()]
+        markdown_paths = [path for path in all_files if path.suffix.lower() == ".md"]
+        other_files = [path for path in all_files if path.suffix.lower() != ".md"]
+        if not markdown_paths and not other_files and not symlinks:
+            findings.append(Finding(
+                "info", "empty-memory-layer", location.reference,
+                "The optional memory directory is empty.",
+                "Remove the empty directory; ContextKit recreates it on the next add or import.",
+                "contextkit guide memory",
+            ))
+        for path in other_files:
+            findings.append(Finding(
+                "warning", "uncompiled-memory-file", _memory_reference(location, path),
+                "Only Markdown files are included in project memory context.",
+                "Move useful text into Markdown or relocate the file to its owning layer.",
+                "contextkit guide memory",
+            ))
+    else:
+        markdown_paths = [
+            (path if path.is_absolute() else root / path).resolve()
+            for path in paths
+            if (path if path.is_absolute() else root / path).suffix.lower() == ".md"
+        ]
+
+    live_claims = _live_context_claim_owners(root)
+    memory_claims: dict[str, list[str]] = {}
+    for path in markdown_paths:
+        try:
+            body = path.read_text()
+        except (OSError, UnicodeError) as exc:
+            findings.append(Finding(
+                "error", "unreadable-memory", _memory_reference(location, path),
+                f"Memory file cannot be read: {exc}",
+                rule_source="contextkit guide memory",
+            ))
+            continue
+        rel = _memory_reference(location, path)
+        visible_body = _memory_body_for_context(body)
+        if not visible_body:
+            findings.append(Finding(
+                "warning", "empty-memory-file", rel,
+                "Memory file contributes no project knowledge.",
+                "Remove the empty file or add the provisional note it is meant to preserve.",
+                "contextkit guide memory",
+            ))
+        for claim in _normalized_claim_text(visible_body):
+            memory_claims.setdefault(claim, []).append(rel)
+            if claim in live_claims:
+                owners = ", ".join(sorted(set(live_claims[claim])))
+                findings.append(Finding(
+                    "warning", "memory-duplicates-live-fact", f"{rel}, {owners}",
+                    "A memory claim duplicates current live context.",
+                    "Keep the live owner and remove or rewrite the provisional memory copy after verification.",
+                    "contextkit guide memory; contextkit guide authoring",
+                ))
+    for claim, owners in sorted(memory_claims.items()):
+        unique = sorted(set(owners))
+        if len(unique) > 1:
+            findings.append(Finding(
+                "warning", "duplicate-memory-claim", ", ".join(unique),
+                "The same provisional claim appears in multiple memory files.",
+                claim[:220],
+                "contextkit guide memory",
+            ))
+    return findings
+
+
+def _project_audit_findings(root: Path) -> list[Finding]:
+    return [*_audit_context_files(root), *_audit_memory(root)]
+
+
 def _audit_report(root: Path, findings: list[Finding]) -> str:
     today = _dt.date.today().isoformat()
     lines = [
@@ -1953,7 +2584,7 @@ def _write_audit(root: Path, report: str) -> Path:
 
 def cmd_audit(args: argparse.Namespace) -> None:
     root = _find_project_root()
-    findings = _audit_context_files(root)
+    findings = _project_audit_findings(root)
     report = _audit_report(root, findings)
     if args.write:
         written = _write_audit(root, report)
@@ -1972,7 +2603,11 @@ def cmd_audit_file(args: argparse.Namespace) -> None:
     path = Path(args.path)
     if not path.is_absolute():
         path = root / path
-    findings = _audit_context_files(root, [path])
+    try:
+        path.resolve().relative_to(_memory_location(root).path.resolve())
+        findings = _audit_memory(root, [path])
+    except ValueError:
+        findings = _audit_context_files(root, [path])
     if args.json:
         _emit({"project": str(root), "rule_source": "contextkit guide audit",
                "findings": [item.as_dict() for item in findings]}, True)
@@ -1994,7 +2629,7 @@ def cmd_groom(args: argparse.Namespace) -> None:
             "Run `contextkit audit --write`, review the report, and apply changes deliberately."
         )
         return
-    findings = _audit_context_files(root)
+    findings = _project_audit_findings(root)
     lines = ["# ContextKit Groom Plan", "", f"Project: `{root}`", ""]
     if not findings:
         lines.append("No audit findings to groom.")
@@ -2399,12 +3034,21 @@ Commands:
   contextkit adopt [--with-layers|--with-template] [--json]
   contextkit install-hooks --target codex|claude [--target ...]
   contextkit build --target codex|claude|all [--json]
+  contextkit memory add <text> [--title <title>] [--json]
+  contextkit memory add --stdin [--title <title>] [--json]
+  contextkit memory context [--json]
+  contextkit memory search <query> [--json]
+  contextkit memory status [--json]
+  contextkit memory import <path> --provider <name> --plan|--apply [--json]
   contextkit audit [--write] [--json]
   contextkit audit-file <path> [--json]
   contextkit groom --plan|--apply
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|global-context|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|global-context|memory|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
   contextkit templates
+
+Environment:
+  CONTEXTKIT_MEMORY_DIR  persistent project-memory root; defaults to ./memory
 """
 
 
@@ -2448,6 +3092,38 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target", choices=["codex", "claude", "all"], default="codex")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("memory", help="capture and inspect provider-neutral project memory")
+    memory_sub = p.add_subparsers(dest="memory_command", required=True)
+
+    memory = memory_sub.add_parser("add", help="append one note to the current daily memory file")
+    memory.add_argument("text", nargs="?", help="note text; quote multi-word text")
+    memory.add_argument("--stdin", action="store_true", help="read note text from standard input")
+    memory.add_argument("--title", help="optional entry heading")
+    memory.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    memory.set_defaults(func=cmd_memory_add)
+
+    memory = memory_sub.add_parser("context", help="render the complete block used by context builds")
+    memory.add_argument("--json", action="store_true", help="include source paths and the block in JSON")
+    memory.set_defaults(func=cmd_memory_context)
+
+    memory = memory_sub.add_parser("search", help="find case-insensitive text matches across memory")
+    memory.add_argument("query", help="text to find")
+    memory.add_argument("--json", action="store_true", help="emit machine-readable matches")
+    memory.set_defaults(func=cmd_memory_search)
+
+    memory = memory_sub.add_parser("status", help="report memory presence, size, and source files")
+    memory.add_argument("--json", action="store_true", help="emit a machine-readable report")
+    memory.set_defaults(func=cmd_memory_status)
+
+    memory = memory_sub.add_parser("import", help="copy Markdown from an existing memory store")
+    memory.add_argument("source", help="Markdown file or directory to inspect")
+    memory.add_argument("--provider", required=True, help="stable source label used under memory/imports")
+    mode = memory.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--plan", action="store_true", help="report destinations without writing")
+    mode.add_argument("--apply", action="store_true", help="copy the accepted non-conflicting plan")
+    memory.add_argument("--json", action="store_true", help="emit a machine-readable plan or result")
+    memory.set_defaults(func=cmd_memory_import)
 
     p = sub.add_parser("audit")
     p.add_argument("--write", action="store_true")

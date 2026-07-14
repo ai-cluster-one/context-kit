@@ -1,6 +1,6 @@
 # Validation Guide
 
-Use this guide after initialization, migration, hook changes, or meaningful edits to `context/`, `assets/`, `routines/`, or `capabilities/`.
+Use this guide after initialization, migration, hook changes, or meaningful edits to `context/`, the active project memory root, `assets/`, `routines/`, or `capabilities/`.
 
 This guide is the operational rule source for validation. It applies Generated Output and Rule Source Routing, then routes each problem to the guide or tool that owns the affected surface.
 
@@ -16,9 +16,9 @@ contextkit audit
 
 `doctor` checks shape, binding, local/generated guards, visible layers, capability gate, legacy dot layers, configured targets, and an optional global context source.
 
-`build` proves project and configured global context can compile into host runtime context. Generated files are build artifacts; do not fix them by hand.
+`build` proves project context, project memory when present, and configured global context can compile into host runtime context. Generated files are build artifacts; do not fix them by hand.
 
-`audit` checks coherence and quality across project and configured global context. Each finding names a rule source. Load the named guide or owner before repairing.
+`audit` checks coherence and quality across project context, project memory when present, and configured global context. Each finding names a rule source. Load the named guide or owner before repairing.
 
 ## Human Review
 

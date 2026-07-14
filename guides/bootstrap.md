@@ -29,6 +29,8 @@ contextkit bootstrap
 
 Bootstrap creates missing binding and empty body layers, installs configured host bindings, builds generated context, runs doctor, and runs audit.
 
+An absent `memory/` directory is healthy. Bootstrap, initialization, and templates do not create it; the first memory capture or import creates it when needed.
+
 If a directory has files but no Git repository, bootstrap asks for a pre-bootstrap Git safeguard before ContextKit changes project files. `--yes` approves that safeguard and managed hook replacement.
 
 Starter context templates are opt-in:

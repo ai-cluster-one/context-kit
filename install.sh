@@ -27,6 +27,7 @@ GUIDE_FILES="
 bootstrap.md
 authoring.md
 global-context.md
+memory.md
 validation.md
 assets.md
 routines.md

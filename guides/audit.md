@@ -14,6 +14,7 @@ Before judging a file, load the rule source that owns that surface:
 | --------------------------------------------------------- | -------------------------------------------------------------------- |
 | `context/**/*.md`                                         | `contextkit guide authoring`                                         |
 | configured global context (`**/*.md`)                     | `contextkit guide global-context`, then `contextkit guide authoring` |
+| active project memory root (`**/*.md`)                    | `contextkit guide memory`                                            |
 | `assets/**/*.md`                                          | `contextkit guide assets`                                            |
 | `routines/**/*.md`                                        | `contextkit guide routines`                                          |
 | `capabilities/` envelopes                                 | `contextkit guide capabilities`, then the capability-owned surface   |

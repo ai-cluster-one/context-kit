@@ -24,6 +24,8 @@ ContextKit gives the project a visible source body, generated host runtime conte
 
 Configured global context is shared live doctrine outside the project that compiles through the same context-file contract. Use `contextkit guide global-context`.
 
+Project memory is provider-neutral provisional knowledge. It defaults to `memory/`; `CONTEXTKIT_MEMORY_DIR` selects an external source when deployment requires persistent storage. Current project context and owning-tool truth take precedence over memory. Use `contextkit memory add` to preserve a new session conclusion that future sessions must consider before it is ready for a durable owner. Never put secrets or an already-owned fact there. Use `contextkit memory status` to prove the active source, `contextkit guide memory` for capture and grooming judgment, and `contextkit help` for the live command contract.
+
 `assets/` is historical evidence: sessions, plans, research, and raw records. Use `contextkit guide assets`.
 
 `routines/` is repeatable procedure. Use `contextkit guide routines`.

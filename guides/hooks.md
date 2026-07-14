@@ -8,6 +8,10 @@ This guide is the operational rule source for host bindings. It applies Host-Neu
 
 Host bindings deliver generated ContextKit output to agent runtimes.
 
+When ContextKit creates a new Claude settings file, it disables Claude automatic memory so project continuity routes through ContextKit memory. When Claude settings already exist, preserve their memory policy and merge only the managed hook. Do not change Codex memory settings.
+
+When project memory uses `CONTEXTKIT_MEMORY_DIR`, ensure the host session and build hook receive the same environment anchor. Verify it from that environment with `contextkit memory status`.
+
 Hooks are thin adapters. They call `contextkit build` and write configured generated targets. Project doctrine lives in source files.
 
 ## Codex
