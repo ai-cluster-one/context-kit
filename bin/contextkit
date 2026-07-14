@@ -40,10 +40,13 @@ DEFAULT_TARGETS = {
 }
 CAP_HOME = Path(os.environ.get("CAPABILITIES_HOME") or (Path.home() / ".capabilities"))
 BUNDLE_REL = Path("bundle")
+GUIDES_REL = Path("guides")
+TEMPLATES_REL = Path("templates")
 LEGACY_DOCTRINE_REL = Path("doctrine")
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
+    "global-context",
     "validation",
     "assets",
     "routines",
@@ -91,6 +94,7 @@ class ContextFile:
     order: int
     body: str
     raw_frontmatter: dict[str, str]
+    source: str = "project"
 
 
 @dataclass
@@ -188,6 +192,50 @@ def _bundle_candidates() -> list[Path]:
     return out
 
 
+def _guide_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env = os.environ.get("CONTEXTKIT_GUIDES_DIR")
+    if env:
+        candidates.append(Path(env).expanduser())
+
+    script = _script_path()
+    candidates += [
+        script.parent.parent / GUIDES_REL,
+        script.parent / GUIDES_REL,
+        Path.home() / ".contextkit" / GUIDES_REL,
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            out.append(candidate)
+            seen.add(key)
+    return out
+
+
+def _template_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env = os.environ.get("CONTEXTKIT_TEMPLATES_DIR")
+    if env:
+        candidates.append(Path(env).expanduser())
+
+    script = _script_path()
+    candidates += [
+        script.parent.parent / TEMPLATES_REL,
+        script.parent / TEMPLATES_REL,
+        Path.home() / ".contextkit" / TEMPLATES_REL,
+    ]
+    out: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = str(candidate)
+        if key not in seen:
+            out.append(candidate)
+            seen.add(key)
+    return out
+
+
 def _remote_ref() -> str:
     return os.environ.get("CONTEXTKIT_REF") or os.environ.get("CONTEXTKIT_TAG") or "main"
 
@@ -198,6 +246,15 @@ def _remote_base() -> str:
 
 def _fetch_bundle(rel: Path) -> str | None:
     url = f"{_remote_base()}/{_remote_ref()}/{BUNDLE_REL.as_posix()}/{rel.as_posix()}"
+    try:
+        with urllib.request.urlopen(url, timeout=8) as response:
+            return response.read().decode("utf-8")
+    except (OSError, UnicodeError, urllib.error.URLError):
+        return None
+
+
+def _fetch_guide(rel: Path) -> str | None:
+    url = f"{_remote_base()}/{_remote_ref()}/{GUIDES_REL.as_posix()}/{rel.as_posix()}"
     try:
         with urllib.request.urlopen(url, timeout=8) as response:
             return response.read().decode("utf-8")
@@ -225,6 +282,49 @@ def _read_bundle(rel: str) -> str:
         "Set CONTEXTKIT_BUNDLE_DIR, install ContextKit bundle globally, or run from the ContextKit checkout.",
         6,
     )
+
+
+def _read_guide(rel: str) -> str:
+    path = Path(rel)
+    for base in _guide_candidates():
+        source = base / path
+        try:
+            return source.read_text()
+        except OSError:
+            continue
+
+    fetched = _fetch_guide(path)
+    if fetched is not None:
+        return fetched
+
+    searched = ", ".join(str(path) for path in _guide_candidates())
+    _die(
+        f"ContextKit guide source not found: {GUIDES_REL / path}\n"
+        f"Searched: {searched}\n"
+        "Set CONTEXTKIT_GUIDES_DIR, install ContextKit guides globally, or run from the ContextKit checkout.",
+        6,
+    )
+
+
+def _template_root() -> Path:
+    for candidate in _template_candidates():
+        if candidate.is_dir():
+            return candidate
+    searched = ", ".join(str(path) for path in _template_candidates())
+    _die(
+        f"ContextKit templates source not found: {TEMPLATES_REL}\n"
+        f"Searched: {searched}\n"
+        "Set CONTEXTKIT_TEMPLATES_DIR, install ContextKit templates globally, or run from the ContextKit checkout.",
+        6,
+    )
+
+
+def _template_files() -> list[Path]:
+    root = _template_root()
+    base = root / "context"
+    if not base.is_dir():
+        return []
+    return sorted(path for path in base.rglob("*.md") if path.is_file())
 
 
 def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
@@ -278,11 +378,38 @@ def _load_toml(path: Path) -> dict[str, Any]:
         _die(f"invalid config TOML at {path}: {exc}", 6)
 
 
+def _resolve_global_context_path(root: Path, value: str) -> Path:
+    expanded = os.path.expandvars(value)
+    if re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})", expanded):
+        _die(
+            f"unresolved environment variable in sources.global_context: {value}\n"
+            "Export the variable before running ContextKit or configure a concrete path.",
+            6,
+        )
+    candidate = Path(expanded).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    resolved = candidate.resolve()
+    project_root = root.resolve()
+    if resolved == project_root or project_root in resolved.parents or resolved in project_root.parents:
+        _die(
+            f"invalid sources.global_context: {value}\n"
+            "Global context and the project must be separate, non-overlapping directory trees. Keep project-owned doctrine under context/.\n"
+            "Use `contextkit guide global-context` for the source contract.",
+            6,
+        )
+    return resolved
+
+
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
+    raw_sources = dict((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
+    global_context_raw = raw_sources.pop("global_context", None)
     sources = dict(DEFAULT_SOURCES)
-    sources.update((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
+    sources.update(raw_sources)
     for name, rel in sources.items():
+        if not isinstance(rel, str) or not rel.strip():
+            _die(f"invalid source path for {name}: expected a non-empty string", 6)
         rel_path = Path(rel)
         allowed_dot_capabilities = name == "capabilities" and rel_path.as_posix() == ".capabilities"
         if rel_path.parts and rel_path.parts[0].startswith(".") and not allowed_dot_capabilities:
@@ -294,6 +421,12 @@ def _config(root: Path) -> dict[str, Any]:
                 6,
             )
 
+    global_context: Path | None = None
+    if global_context_raw is not None:
+        if not isinstance(global_context_raw, str) or not global_context_raw.strip():
+            _die("invalid sources.global_context: expected a non-empty path string", 6)
+        global_context = _resolve_global_context_path(root, global_context_raw)
+
     targets: dict[str, Path] = dict(DEFAULT_TARGETS)
     raw_targets = raw.get("targets") if isinstance(raw.get("targets"), dict) else {}
     for name, entry in raw_targets.items():
@@ -304,6 +437,8 @@ def _config(root: Path) -> dict[str, Any]:
         "version": raw.get("version", VERSION),
         "type": raw.get("type", "agent-project"),
         "sources": sources,
+        "global_context": global_context,
+        "global_context_raw": global_context_raw,
         "targets": targets,
         "raw": raw,
     }
@@ -373,7 +508,7 @@ def _parse_frontmatter(text: str) -> tuple[dict[str, str], str]:
     return fm, text[body_start:]
 
 
-def _read_context_file(root: Path, path: Path) -> tuple[ContextFile | None, list[str]]:
+def _read_context_file(root: Path, path: Path, source: str = "project") -> tuple[ContextFile | None, list[str]]:
     rel = Path(_rel(root, path))
     try:
         text = path.read_text()
@@ -401,17 +536,24 @@ def _read_context_file(root: Path, path: Path) -> tuple[ContextFile | None, list
         errors.append(f"Invalid frontmatter order in {rel}: {order_raw or '<missing>'}")
     if errors:
         return None, errors
-    return ContextFile(path, rel, title, description, load, order, body, fm), []
+    return ContextFile(path, rel, title, description, load, order, body, fm, source), []
 
 
-def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], list[str]]:
-    base = root / context_dir
+def _collect_context(root: Path, context_dir: Path, source: str = "project") -> tuple[list[ContextFile], list[str]]:
+    base = context_dir if context_dir.is_absolute() else root / context_dir
     if not base.is_dir():
         legacy = root / f".{context_dir.as_posix()}"
-        if not context_dir.as_posix().startswith(".") and legacy.is_dir():
+        if source == "project" and not context_dir.as_posix().startswith(".") and legacy.is_dir():
             _die(
                 f"context source directory not found: {context_dir}\n"
                 f"Legacy `{legacy.name}/` exists. Rename it to `{context_dir.as_posix()}/` before building with ContextKit.",
+                6,
+            )
+        if source == "global":
+            _die(
+                f"global context source directory not found: {base}\n"
+                "Repair `sources.global_context` in .contextkit/config.toml or remove it to disable global context.\n"
+                "Use `contextkit guide global-context` for the source contract.",
                 6,
             )
         _die(
@@ -422,7 +564,7 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
     files: list[ContextFile] = []
     errors: list[str] = []
     for path in sorted(base.rglob("*.md")):
-        ctx, ctx_errors = _read_context_file(root, path)
+        ctx, ctx_errors = _read_context_file(root, path, source)
         if ctx:
             files.append(ctx)
         errors.extend(ctx_errors)
@@ -432,8 +574,51 @@ def _collect_context(root: Path, context_dir: Path) -> tuple[list[ContextFile], 
     return files, errors
 
 
+def _context_reference(item: ContextFile) -> str:
+    if item.source == "global":
+        return str(item.path.resolve())
+    return item.rel.as_posix()
+
+
 def _runtime_block() -> str:
     return _read_bundle("runtime.md")
+
+
+def _guide_summary(topic: str) -> tuple[str, str]:
+    text = _read_guide(f"{topic}.md")
+    title = topic
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("# ") and title == topic:
+            title = line[2:].strip()
+            continue
+        if not line:
+            if current:
+                paragraphs.append(" ".join(current))
+                current = []
+            continue
+        if line.startswith("#") or line.startswith("```") or line.startswith("|"):
+            continue
+        current.append(line)
+    if current:
+        paragraphs.append(" ".join(current))
+    summary = paragraphs[0] if paragraphs else f"Load when working with {topic}."
+    return title, _one_line(summary)
+
+
+def _guide_menu() -> str:
+    lines = [
+        "# Guide Menu",
+        "",
+        "Guides are on-demand. Load the guide only when the task needs that workflow or surface.",
+        "",
+    ]
+    for topic in GUIDE_TOPICS:
+        title, summary = _guide_summary(topic)
+        lines.append(f"- `contextkit guide {topic}` - {title}: {summary}")
+    return "\n".join(lines)
 
 
 def _guide_rule_sources() -> str:
@@ -632,7 +817,15 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     context_dir = Path(sources["context"])
     routines_dir = Path(sources["routines"])
     capabilities_dir = Path(sources["capabilities"])
-    files, _ = _collect_context(root, context_dir)
+    project_files, _ = _collect_context(root, context_dir)
+    global_context: Path | None = cfg["global_context"]
+    global_files: list[ContextFile] = []
+    if global_context is not None:
+        global_files, _ = _collect_context(root, global_context, "global")
+    files = sorted(
+        [*global_files, *project_files],
+        key=lambda item: (item.order, 0 if item.source == "global" else 1, item.rel.as_posix()),
+    )
     warnings: list[str] = []
     inline = [item for item in files if item.load == "inline"]
     stubs = [item for item in files if item.load == "stub"]
@@ -644,23 +837,46 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     out += [
         "Compiled source directories:",
         "",
-        f"- `{context_dir.as_posix()}`",
+        f"- Project context: `{context_dir.as_posix()}`",
+    ]
+    if global_context is not None:
+        out.append(f"- Global context: `{global_context}`")
+    out += [
         "",
         "Context load modes:",
         "",
         f"- Inline files: {len(inline)}",
         f"- Stub files: {len(stubs)}",
-        "",
     ]
+    if global_context is not None:
+        out += [
+            f"- Global inline files: {sum(item.source == 'global' for item in inline)}",
+            f"- Global stub files: {sum(item.source == 'global' for item in stubs)}",
+        ]
+    out.append("")
     if warnings:
         out += ["Generation warnings:", ""]
         out += [f"- {warning}" for warning in warnings]
         out.append("")
 
-    out += ["---", "", _runtime_block().strip(), "", "---", "", "# Inline Context", ""]
+    out += [
+        "---",
+        "",
+        _runtime_block().strip(),
+        "",
+        "---",
+        "",
+        _guide_menu().strip(),
+        "",
+        "---",
+        "",
+        "# Inline Context",
+        "",
+    ]
     if inline:
         for item in inline:
-            out += ["---", "", f"## Source: `{item.rel.as_posix()}`", "", item.body.strip(), ""]
+            source_label = "Global Source" if item.source == "global" else "Source"
+            out += ["---", "", f"## {source_label}: `{_context_reference(item)}`", "", item.body.strip(), ""]
     else:
         out += ["No inline context files.", ""]
 
@@ -669,7 +885,8 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
             ""]
     if stubs:
         for item in stubs:
-            out.append(f"- **{item.title}** (`{item.rel.as_posix()}`) - {item.description}")
+            origin = ", global" if item.source == "global" else ""
+            out.append(f"- **{item.title}** (`{_context_reference(item)}`{origin}) - {item.description}")
         out.append("")
     else:
         out += ["No stub context files.", ""]
@@ -756,49 +973,13 @@ def _context_file(title: str, description: str, load: str, order: int, body: str
     )
 
 
-SKELETON_FILES = {
-    "context/identity/MISSION.md": _context_file(
-        "Mission", "The agent's mission, operating scope, and north star.", "inline", 10,
-        "State what this agent exists to do, what good work looks like, and what is out of scope.",
-    ),
-    "context/identity/AGENT.md": _context_file(
-        "Agent", "The agent identity, voice, operating posture, and boundaries.", "inline", 20,
-        "Describe who the agent is inside this project, including voice and operating posture.",
-    ),
-    "context/identity/OWNER.md": _context_file(
-        "Owner", "The owner or supervisor relationship and command authority.", "inline", 30,
-        "Name the owner role, supervision model, and escalation triggers.",
-    ),
-    "context/identity/PEOPLE.md": _context_file(
-        "People", "Project people, roles, authority, and durable communication facts.", "stub", 40,
-        "Record durable people facts only when they matter to future agent work.",
-    ),
-    "context/guidelines/CONSTITUTION.md": _context_file(
-        "Constitution", "Always-on project doctrine and behavior rules for the agent.", "inline", 100,
-        "Define the agent's project-specific principles, validation rules, escalation path, and tradeoffs.",
-    ),
-    "context/guidelines/LIMITATIONS.md": _context_file(
-        "Limitations", "Hard limits for the agent and for context authoring in this project.", "inline", 110,
-        "List non-negotiable constraints. Keep each limitation owned here and avoid duplicating it elsewhere.",
-    ),
-    "context/guidelines/ASSETS.md": _context_file(
-        "Assets", "Map of on-demand asset folders and what belongs in each.", "stub", 120,
-        "Explain `assets/` as supporting project material: sessions, plans, research, and other historical evidence.",
-    ),
-    "context/architecture/RUNTIME.md": _context_file(
-        "Runtime", "Runtime bodies, host surfaces, generated context, and execution boundaries.", "stub", 200,
-        "Describe how this agent runs, where generated context lands, and which host surfaces consume it.",
-    ),
-    "context/architecture/SERVICES.md": _context_file(
-        "Services", "External services, ownership boundaries, and source-of-truth routing.", "stub", 210,
-        "Map external systems at the boundary level. Detailed tool operation belongs in capabilities.",
-    ),
-}
-
-
 def _config_body() -> str:
     return """version = 1
 type = "agent-project"
+
+[sources]
+# Optional shared doctrine outside this project:
+# global_context = "~/contextkit-global"
 
 [targets.codex]
 output = ".codex/generated/context.md"
@@ -829,10 +1010,9 @@ Common commands:
 - `contextkit doctor`
 - `contextkit audit`
 - `contextkit guide authoring`
+- `contextkit guide global-context`
 
-Add durable project context under `context/`. Put historical or supporting material
-under `assets/`. Put repeatable procedures under `routines/`. Put installed tool
-envelopes under `capabilities/`.
+Add durable project context under `context/`. Configure optional cross-project doctrine with `sources.global_context`. Put historical or supporting material under `assets/`. Put repeatable procedures under `routines/`. Put installed tool envelopes under `capabilities/`.
 """
 
 
@@ -869,8 +1049,10 @@ def _init_project(root: Path, with_layers: bool = False, with_template: bool = F
     if with_layers or with_template:
         _ensure_project_layers(root, created, skipped)
     if with_template:
-        for rel, body in SKELETON_FILES.items():
-            _write_if_missing(root / rel, body, created, skipped)
+        template_root = _template_root()
+        for source in _template_files():
+            rel = source.relative_to(template_root)
+            _write_if_missing(root / rel, source.read_text(), created, skipped)
     return {"project": str(root), "created": created, "changed": changed, "skipped": skipped}
 
 
@@ -1213,6 +1395,13 @@ def _bootstrap_conflicts(root: Path, targets: list[str]) -> dict[str, list[Any]]
         except ContextKitError as exc:
             blockers.append(str(exc))
 
+    global_context = (cfg or {}).get("global_context")
+    if global_context is not None and not global_context.is_dir():
+        blockers.append(
+            f"configured global context source is missing or is not a directory: {global_context}; "
+            "repair sources.global_context or remove it to disable the source"
+        )
+
     legacy_dot_layers = _legacy_dot_layers(root, (cfg or {}).get("sources"))
     for rel in legacy_dot_layers:
         blockers.append(f"legacy dot body layer present: {rel} -> {rel[1:]}; run `contextkit migrate --plan`")
@@ -1412,23 +1601,40 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         }
         for name, rel in sources.items()
     }
+    global_context_path: Path | None = cfg["global_context"]
+    global_context = None
+    if global_context_path is not None:
+        global_context = {
+            "configured": cfg["global_context_raw"],
+            "path": str(global_context_path),
+            "present": global_context_path.exists(),
+            "directory": global_context_path.is_dir(),
+        }
     problems: list[str] = []
     problems += [f"missing required file: {name}" for name, item in required_files.items() if not item["present"]]
     problems += [f"missing .gitignore guard: {pattern}" for pattern, present in gitignore_guards.items() if not present]
     problems += [f"missing project layer: {name} ({item['path']})" for name, item in layers.items() if not item["present"]]
     problems += [f"legacy dot layer present: {rel} -> {rel[1:]}" for rel in legacy_dot_layers]
+    if global_context and not global_context["present"]:
+        problems.append(f"missing global context source: {global_context['path']}")
+    elif global_context and not global_context["directory"]:
+        problems.append(f"global context source is not a directory: {global_context['path']}")
+    rule_sources = ["contextkit guide validation", "contextkit guide bootstrap"]
+    if global_context:
+        rule_sources.append("contextkit guide global-context")
     report = {
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "type": cfg["type"],
         "ok": not problems,
         "problems": problems,
-        "rule_sources": ["contextkit guide validation", "contextkit guide bootstrap"],
+        "rule_sources": rule_sources,
         "git": _git_state(root),
         "required_files": required_files,
         "gitignore_guards": gitignore_guards,
         "legacy_dot_layers": legacy_dot_layers,
         "layers": layers,
+        "global_context": global_context,
         "tools": {
             "contextkit": str(Path(sys.argv[0]).resolve()),
             "capabilities": shutil.which("capabilities"),
@@ -1458,7 +1664,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         f"Status: {'ok' if report['ok'] else 'needs attention'}",
         "",
     ]
-    lines += ["Rule sources:", "- `contextkit guide validation`", "- `contextkit guide bootstrap`", ""]
+    lines += ["Rule sources:", *[f"- `{source}`" for source in report["rule_sources"]], ""]
     if report["problems"]:
         lines += ["Problems:", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
@@ -1478,6 +1684,10 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     for name, item in report["layers"].items():
         marker = "present" if item["present"] else "missing"
         lines.append(f"- {name}: {marker} (`{item['path']}`)")
+    if report["global_context"]:
+        item = report["global_context"]
+        marker = "present" if item["directory"] else "missing or invalid"
+        lines += ["", "Global context:", f"- Source: {marker} (`{item['path']}`)"]
     lines += ["", "Tools:"]
     for name, value in report["tools"].items():
         lines.append(f"- {name}: `{value or 'not found'}`")
@@ -1521,6 +1731,35 @@ def _running_state_hint(text: str) -> str | None:
     return None
 
 
+def _hard_wrapped_prose_hint(text: str) -> str | None:
+    in_fence = False
+    previous_can_continue = False
+    for raw in text.splitlines():
+        stripped = raw.strip()
+        if stripped.startswith(("```", "~~~")):
+            in_fence = not in_fence
+            previous_can_continue = False
+            continue
+        if in_fence:
+            continue
+        if not stripped:
+            previous_can_continue = False
+            continue
+        if raw.startswith("    ") or stripped.startswith(("#", ">", "|", "<")):
+            previous_can_continue = False
+            continue
+        if stripped in {"---", "***", "___"}:
+            previous_can_continue = False
+            continue
+        if re.match(r"^(?:[-+*]|\d+[.)])\s+", stripped):
+            previous_can_continue = True
+            continue
+        if previous_can_continue:
+            return "Keep each prose paragraph and list item on one physical line; let the editor or renderer wrap it visually."
+        previous_can_continue = True
+    return None
+
+
 def _normalized_claims(item: ContextFile) -> list[str]:
     claims: list[str] = []
     for raw in re.split(r"[\n.]", item.body):
@@ -1540,9 +1779,33 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
     context_dir = Path(cfg["sources"]["context"])
     findings: list[Finding] = []
     files: list[ContextFile] = []
-    raw_paths = paths if paths is not None else sorted((root / context_dir).rglob("*.md"))
-    for path in raw_paths:
-        ctx, errors = _read_context_file(root, path)
+    global_context: Path | None = cfg["global_context"]
+    sourced_paths: list[tuple[Path, str]] = []
+    if paths is not None:
+        for path in paths:
+            resolved = (path if path.is_absolute() else root / path).resolve()
+            source = "project"
+            if global_context is not None:
+                try:
+                    resolved.relative_to(global_context)
+                    source = "global"
+                except ValueError:
+                    pass
+            sourced_paths.append((resolved, source))
+    else:
+        sourced_paths += [(path, "project") for path in sorted((root / context_dir).rglob("*.md"))]
+        if global_context is not None:
+            if not global_context.is_dir():
+                findings.append(Finding(
+                    "error", "global-context-source", str(global_context),
+                    "Configured global context source is missing or is not a directory.",
+                    "Repair `sources.global_context` in `.contextkit/config.toml` or remove it to disable the source.",
+                    "contextkit guide global-context",
+                ))
+            else:
+                sourced_paths += [(path, "global") for path in sorted(global_context.rglob("*.md"))]
+    for path, source in sourced_paths:
+        ctx, errors = _read_context_file(root, path, source)
         if errors:
             for err in errors:
                 findings.append(Finding(
@@ -1615,6 +1878,14 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
             findings.append(Finding(
                 "warning", "running-state-in-context", rel,
                 "Live context appears to contain running task state.",
+                hint,
+                "contextkit guide authoring",
+            ))
+        hint = _hard_wrapped_prose_hint(item.body)
+        if hint:
+            findings.append(Finding(
+                "warning", "hard-wrapped-prose", rel,
+                "Authored prose uses a width-driven physical line break.",
                 hint,
                 "contextkit guide authoring",
             ))
@@ -2093,13 +2364,27 @@ def cmd_guide(args: argparse.Namespace) -> None:
     topic = args.topic or "authoring"
     if topic not in GUIDE_TOPICS:
         _die(f"unknown guide topic: {topic}\nAvailable: {', '.join(GUIDE_TOPICS)}", 6)
-    _emit(_read_bundle((Path("guides") / f"{topic}.md").as_posix()))
+    _emit(_read_guide(f"{topic}.md"))
 
 
 def cmd_templates(_: argparse.Namespace) -> None:
-    lines = ["# ContextKit Templates", "", "Starter context template files:", ""]
-    for rel in sorted(SKELETON_FILES):
-        lines.append(f"- `{rel}`")
+    template_root = _template_root()
+    lines = [
+        "# ContextKit Templates",
+        "",
+        "Starter context gallery. Copy or adapt templates that fit the project; `--with-template` creates the current starter set.",
+        "",
+    ]
+    files = _template_files()
+    if not files:
+        lines.append("No context templates are available.")
+    for path in files:
+        rel = path.relative_to(template_root).as_posix()
+        fm, _body = _parse_frontmatter(path.read_text())
+        title = fm.get("title", path.stem)
+        description = fm.get("description", "").strip()
+        suffix = f" - {description}" if description else ""
+        lines.append(f"- `{rel}` - {title}{suffix}")
     lines += ["", "Run `contextkit init --with-template` to create missing binding, layers, and starter context files."]
     _emit("\n".join(lines) + "\n")
 
@@ -2118,7 +2403,7 @@ Commands:
   contextkit audit-file <path> [--json]
   contextkit groom --plan|--apply
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|global-context|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
   contextkit templates
 """
 

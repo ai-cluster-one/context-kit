@@ -1,9 +1,5 @@
 # Bundle
 
-Bundle holds the shipped context blocks ContextKit delivers or exposes to
-initialized projects.
+Bundle holds the shipped always-on runtime block ContextKit emits into generated host context.
 
-This includes the always-on runtime block, on-demand guides, and future
-templates or routines. Bundled files are product artifacts. They are not admin
-work memory and are not copied into projects unless a specific command says so.
-
+On-demand guides live in top-level `guides/`. Starter files live in top-level `templates/`. These are product artifacts, not admin work memory.

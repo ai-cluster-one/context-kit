@@ -1,5 +1,5 @@
 #!/bin/sh
-# contextkit bootstrap — installs the `contextkit` manager and its global bundle.
+# contextkit bootstrap — installs the `contextkit` manager, runtime, guides, and templates.
 #
 #   curl -fsSL https://raw.githubusercontent.com/ai-cluster-one/context-kit/main/install.sh | sh
 #
@@ -18,18 +18,35 @@ CTX_HOME="${CONTEXTKIT_HOME:-$HOME/.contextkit}"
 MANAGER_DIR="$CTX_HOME/.manager"
 MANAGER="$MANAGER_DIR/contextkit"
 BUNDLE_DIR="$CTX_HOME/bundle"
+GUIDES_DIR="$CTX_HOME/guides"
+TEMPLATES_DIR="$CTX_HOME/templates"
 BUNDLE_FILES="
 runtime.md
-guides/bootstrap.md
-guides/authoring.md
-guides/validation.md
-guides/assets.md
-guides/routines.md
-guides/audit.md
-guides/destructive.md
-guides/migration.md
-guides/hooks.md
-guides/capabilities.md
+"
+GUIDE_FILES="
+bootstrap.md
+authoring.md
+global-context.md
+validation.md
+assets.md
+routines.md
+audit.md
+destructive.md
+migration.md
+hooks.md
+capabilities.md
+"
+TEMPLATE_FILES="
+README.md
+context/identity/MISSION.md
+context/identity/AGENT.md
+context/identity/OWNER.md
+context/identity/PEOPLE.md
+context/guidelines/CONSTITUTION.md
+context/guidelines/LIMITATIONS.md
+context/guidelines/ASSETS.md
+context/architecture/RUNTIME.md
+context/architecture/SERVICES.md
 "
 
 err() { printf '%s\n' "$*" >&2; exit 1; }
@@ -50,9 +67,13 @@ fi
 printf 'contextkit bootstrap — the plan:\n'
 printf '  fetch    %s/bin/contextkit\n' "$REPO"
 printf '  fetch    %s/bundle/*.md\n' "$REPO"
+printf '  fetch    %s/guides/*.md\n' "$REPO"
+printf '  fetch    %s/templates/...\n' "$REPO"
 if [ -n "$SHA256" ]; then printf '  verify   sha256 %s\n' "$SHA256"; else printf '  verify   (no checksum pinned for ref %s)\n' "$TAG"; fi
 printf '  place    %s\n' "$MANAGER"
 printf '  bundle   %s\n' "$BUNDLE_DIR"
+printf '  guides   %s\n' "$GUIDES_DIR"
+printf '  templates %s\n' "$TEMPLATES_DIR"
 printf '  symlink  %s/contextkit\n' "$BIN_DIR"
 
 if (exec < /dev/tty) 2>/dev/null; then
@@ -71,7 +92,7 @@ if [ -n "$SHA256" ]; then
 fi
 head -1 "$tmp" | grep -q "python3" || err "fetched file does not look like the manager script"
 
-mkdir -p "$MANAGER_DIR" "$BIN_DIR" "$BUNDLE_DIR"
+mkdir -p "$MANAGER_DIR" "$BIN_DIR" "$BUNDLE_DIR" "$GUIDES_DIR" "$TEMPLATES_DIR"
 cp "$tmp" "$MANAGER"
 chmod +x "$MANAGER"
 
@@ -79,6 +100,18 @@ for rel in $BUNDLE_FILES; do
     dest="$BUNDLE_DIR/$rel"
     mkdir -p "$(dirname "$dest")"
     curl -fsSL "$REPO/bundle/$rel" -o "$dest" || err "fetch failed: $REPO/bundle/$rel"
+done
+
+for rel in $GUIDE_FILES; do
+    dest="$GUIDES_DIR/$rel"
+    mkdir -p "$(dirname "$dest")"
+    curl -fsSL "$REPO/guides/$rel" -o "$dest" || err "fetch failed: $REPO/guides/$rel"
+done
+
+for rel in $TEMPLATE_FILES; do
+    dest="$TEMPLATES_DIR/$rel"
+    mkdir -p "$(dirname "$dest")"
+    curl -fsSL "$REPO/templates/$rel" -o "$dest" || err "fetch failed: $REPO/templates/$rel"
 done
 
 ln -sf "$MANAGER" "$BIN_DIR/contextkit"
