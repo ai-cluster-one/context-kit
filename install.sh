@@ -26,6 +26,7 @@ runtime.md
 GUIDE_FILES="
 bootstrap.md
 authoring.md
+agent-team.md
 global-context.md
 memory.md
 validation.md

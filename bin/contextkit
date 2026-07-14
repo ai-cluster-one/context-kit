@@ -49,6 +49,7 @@ LEGACY_DOCTRINE_REL = Path("doctrine")
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
+    "agent-team",
     "global-context",
     "memory",
     "validation",
@@ -3044,7 +3045,7 @@ Commands:
   contextkit audit-file <path> [--json]
   contextkit groom --plan|--apply
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|global-context|memory|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|agent-team|global-context|memory|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
   contextkit templates
 
 Environment:

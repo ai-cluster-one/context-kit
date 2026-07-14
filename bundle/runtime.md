@@ -16,6 +16,8 @@ ContextKit gives the project a visible source body, generated host runtime conte
 - Prove tool readiness at use time with the owning tool.
 - Stop for human approval before destructive, external, publishing, credential, access, or product-direction consequences.
 
+Before non-trivial work that changes behavior or durable project material, spans multiple files or surfaces, or requires substantive judgment, offer the user Direct or Agent Team mode once unless the user has already selected a mode. In Agent Team mode, remain the task setter and orchestrator, give execution to one subagent, give independent review to another subagent, and load `contextkit guide agent-team` before starting.
+
 ## Source Body
 
 `.contextkit/` is technical binding, config, and ContextKit-native artifacts. It is not project doctrine.
