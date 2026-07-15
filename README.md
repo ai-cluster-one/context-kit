@@ -63,6 +63,15 @@ For local development, run the checked-out script directly:
 ./bin/contextkit help
 ```
 
+Check the installed ContextKit release and apply an available update through the manager:
+
+```sh
+contextkit update --check
+contextkit update --apply
+```
+
+Run `contextkit help` for non-interactive and source-override options.
+
 ## Project Body
 
 ```text

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import tempfile
@@ -34,9 +35,8 @@ class AgentTeamTests(unittest.TestCase):
         self.assertEqual(help_result.returncode, 0, help_result.stderr)
         self.assertIn("agent-team", help_result.stdout)
 
-        installer = (REPO_ROOT / "install.sh").read_text()
-        guide_manifest = installer.split('GUIDE_FILES="', 1)[1].split('"', 1)[0]
-        self.assertIn("agent-team.md", guide_manifest.splitlines())
+        release = json.loads((REPO_ROOT / "release.json").read_text())
+        self.assertIn("guides/agent-team.md", release["files"])
 
     def test_generated_context_offers_and_routes_agent_team_mode(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

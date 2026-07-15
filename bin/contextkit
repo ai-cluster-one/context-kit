@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import datetime as _dt
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 import re
@@ -15,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import urllib.error
+import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,6 +65,10 @@ GUIDE_TOPICS = [
     "capabilities",
 ]
 DEFAULT_RAW_BASE = "https://raw.githubusercontent.com/ai-cluster-one/context-kit"
+RELEASE_MANIFEST = "release.json"
+INSTALL_PROVENANCE = "install.json"
+PRODUCT_FILE_PREFIXES = ("bundle/", "guides/", "templates/")
+MAX_UPDATE_FILE_BYTES = 5 * 1024 * 1024
 
 REQUIRED_GITIGNORE_BASE_LINES = [
     ".env",
@@ -114,6 +121,22 @@ class MemoryLocation:
     path: Path
     reference: str
     external: bool
+
+
+@dataclass(frozen=True)
+class UpdateSource:
+    base: str
+    ref: str
+    base_origin: str
+    ref_origin: str
+
+
+@dataclass(frozen=True)
+class InstallPaths:
+    home: Path
+    bin_dir: Path
+    manager: Path
+    link: Path
 
 
 @dataclass
@@ -256,11 +279,641 @@ def _template_candidates() -> list[Path]:
 
 
 def _remote_ref() -> str:
-    return os.environ.get("CONTEXTKIT_REF") or os.environ.get("CONTEXTKIT_TAG") or "main"
+    value = os.environ.get("CONTEXTKIT_REF")
+    if value is None:
+        value = os.environ.get("CONTEXTKIT_TAG")
+    return _validate_source_ref("main" if value is None else value, "ContextKit remote ref")
 
 
 def _remote_base() -> str:
-    return os.environ.get("CONTEXTKIT_RAW_BASE", DEFAULT_RAW_BASE).rstrip("/")
+    return _validate_source_base(os.environ.get("CONTEXTKIT_RAW_BASE", DEFAULT_RAW_BASE), "CONTEXTKIT_RAW_BASE")
+
+
+def _configured_path(value: str | Path, label: str) -> Path:
+    raw = Path(value).expanduser()
+    lexical = Path(os.path.abspath(str(raw)))
+    try:
+        resolved = lexical.resolve(strict=False)
+    except OSError as exc:
+        _die(f"ContextKit update cannot resolve {label}: {exc}", 7)
+    if lexical != resolved:
+        _die(f"ContextKit update needs review: {label} contains a symlink ancestor", 7)
+    return resolved
+
+
+def _configured_bin_dir() -> Path:
+    override = os.environ.get("CONTEXTKIT_BIN")
+    if override is not None:
+        if not override.strip():
+            _die("CONTEXTKIT_BIN must not be empty", 6)
+        return _configured_path(override, "CONTEXTKIT_BIN")
+    on_path: set[Path] = set()
+    for value in os.environ.get("PATH", "").split(os.pathsep):
+        if not value:
+            continue
+        try:
+            on_path.add(Path(value).expanduser().resolve())
+        except OSError:
+            continue
+    for candidate in (Path.home() / ".local" / "bin", Path.home() / "bin"):
+        try:
+            if candidate.is_dir() and candidate.resolve() in on_path:
+                return _configured_path(candidate, "ContextKit bin directory")
+        except OSError:
+            continue
+    return _configured_path(Path.home() / ".local" / "bin", "ContextKit bin directory")
+
+
+def _install_paths() -> InstallPaths:
+    home_value = os.environ.get("CONTEXTKIT_HOME")
+    if home_value is not None and not home_value.strip():
+        _die("CONTEXTKIT_HOME must not be empty", 6)
+    home = _configured_path(home_value or (Path.home() / ".contextkit"), "CONTEXTKIT_HOME")
+    bin_dir = _configured_bin_dir()
+    if home == Path(home.anchor) or bin_dir == Path(bin_dir.anchor):
+        _die("ContextKit update needs review: managed paths cannot be filesystem roots", 7)
+    if home == bin_dir or home in bin_dir.parents or bin_dir in home.parents:
+        _die("ContextKit update needs review: CONTEXTKIT_HOME and CONTEXTKIT_BIN must not overlap", 7)
+    paths = InstallPaths(
+        home=home,
+        bin_dir=bin_dir,
+        manager=home / ".manager" / "contextkit",
+        link=bin_dir / "contextkit",
+    )
+    _validate_existing_install_paths(paths)
+    _validate_no_update_residue(paths)
+    return paths
+
+
+def _residue_prefix(paths: InstallPaths, kind: str) -> str:
+    owner = hashlib.sha256(str(paths.home).encode("utf-8")).hexdigest()[:12]
+    return f".contextkit-{owner}-{kind}-"
+
+
+def _validate_no_update_residue(paths: InstallPaths) -> None:
+    residues: list[Path] = []
+    if paths.home.parent.is_dir():
+        for kind in ("stage", "backup"):
+            residues.extend(sorted(paths.home.parent.glob(_residue_prefix(paths, kind) + "*")))
+    if paths.bin_dir.is_dir():
+        residues.extend(sorted(paths.bin_dir.glob(_residue_prefix(paths, "link") + "*")))
+    if residues:
+        rendered = ", ".join(str(path) for path in residues)
+        _die(f"ContextKit update needs review: managed cleanup residue exists: {rendered}", 7)
+
+
+def _cleanup_tree(path: Path) -> str | None:
+    if not path.exists() and not path.is_symlink():
+        return None
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except OSError as exc:
+        return str(exc)
+    if path.exists() or path.is_symlink():
+        return "path still exists after cleanup"
+    return None
+
+
+def _validate_existing_install_paths(paths: InstallPaths) -> None:
+    if paths.home.exists() and not paths.home.is_dir():
+        _die(f"ContextKit update needs review: managed root is not a directory: {paths.home}", 7)
+    if paths.bin_dir.exists() and not paths.bin_dir.is_dir():
+        _die(f"ContextKit update needs review: bin path is not a directory: {paths.bin_dir}", 7)
+    for name in (".manager", "bundle", "guides", "templates"):
+        path = paths.home / name
+        if path.is_symlink() or (path.exists() and not path.is_dir()):
+            _die(f"ContextKit update needs review: managed directory has foreign shape: {path}", 7)
+    for name in (RELEASE_MANIFEST, INSTALL_PROVENANCE):
+        path = paths.home / name
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            _die(f"ContextKit update needs review: managed state file has foreign shape: {path}", 7)
+    if paths.manager.is_symlink() or (paths.manager.exists() and not paths.manager.is_file()):
+        _die(f"ContextKit update needs review: manager has foreign shape: {paths.manager}", 7)
+    if paths.link.is_symlink():
+        try:
+            target = paths.link.resolve(strict=False)
+        except OSError as exc:
+            _die(f"ContextKit update cannot inspect its command symlink: {exc}", 7)
+        if target != paths.manager:
+            _die(f"ContextKit update needs review: command symlink is owned by another target: {paths.link}", 7)
+    elif paths.link.exists():
+        _die(f"ContextKit update needs review: command path is not a managed symlink: {paths.link}", 7)
+
+
+def _validate_source_base(value: Any, owner: str, exit_code: int = 6) -> str:
+    if not isinstance(value, str) or not value or value != value.strip():
+        _die(f"invalid ContextKit update source in {owner}", exit_code)
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except (TypeError, ValueError):
+        _die(f"invalid ContextKit update source in {owner}", exit_code)
+    if parsed.username is not None or parsed.password is not None or parsed.query or parsed.fragment:
+        _die(f"invalid ContextKit update source in {owner}: credentials, query, and fragment are not allowed", exit_code)
+    if parsed.scheme not in {"https", "http", "file"}:
+        _die(f"invalid ContextKit update source in {owner}: expected an https, http, or file URL", exit_code)
+    scheme = parsed.scheme.lower()
+    if scheme == "file":
+        if parsed.netloc not in {"", "localhost"}:
+            _die(f"invalid ContextKit update source in {owner}: remote file hosts are not allowed", exit_code)
+        try:
+            local_path = Path(urllib.request.url2pathname(parsed.path))
+        except (OSError, ValueError):
+            _die(f"invalid ContextKit update source in {owner}: malformed local-file path", exit_code)
+        if not local_path.is_absolute() or local_path == Path(local_path.anchor) or "\\" in parsed.path or any(ord(char) < 32 for char in parsed.path):
+            _die(f"invalid ContextKit update source in {owner}: local-file path must be absolute", exit_code)
+        try:
+            return local_path.resolve(strict=False).as_uri().rstrip("/")
+        except (OSError, ValueError):
+            _die(f"invalid ContextKit update source in {owner}: malformed local-file path", exit_code)
+    if not parsed.netloc or parsed.path and not parsed.path.startswith("/"):
+        _die(f"invalid ContextKit update source in {owner}: network host or path is malformed", exit_code)
+    try:
+        host = parsed.hostname
+        port = parsed.port
+    except ValueError:
+        _die(f"invalid ContextKit update source in {owner}: network host or port is malformed", exit_code)
+    if not host or port is not None and not (1 <= port <= 65535):
+        _die(f"invalid ContextKit update source in {owner}: network host or port is malformed", exit_code)
+    try:
+        if ":" in host:
+            canonical_host = f"[{ipaddress.IPv6Address(host).compressed}]"
+        else:
+            try:
+                canonical_host = str(ipaddress.IPv4Address(host))
+            except ipaddress.AddressValueError:
+                canonical_host = host.encode("idna").decode("ascii").lower()
+                labels = canonical_host.split(".")
+                if any(not label or len(label) > 63 or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", label) for label in labels):
+                    raise ValueError("invalid host")
+    except (UnicodeError, ValueError, ipaddress.AddressValueError):
+        _die(f"invalid ContextKit update source in {owner}: network host is malformed", exit_code)
+    if "\\" in parsed.path or any(ord(char) < 32 for char in parsed.path):
+        _die(f"invalid ContextKit update source in {owner}: network path is malformed", exit_code)
+    netloc = canonical_host + (f":{port}" if port is not None else "")
+    path = parsed.path.rstrip("/")
+    return urllib.parse.urlunsplit((scheme, netloc, path, "", ""))
+
+
+def _validate_source_ref(value: Any, owner: str, exit_code: int = 6) -> str:
+    if not isinstance(value, str) or not value or value != value.strip() or len(value) > 200:
+        _die(f"invalid ContextKit update ref in {owner}", exit_code)
+    if value.startswith("/") or value.endswith("/") or "\\" in value or any(ord(char) < 32 for char in value):
+        _die(f"invalid ContextKit update ref in {owner}", exit_code)
+    components = value.split("/")
+    for component in components:
+        if not component or component in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_@+-][A-Za-z0-9._@+-]*", component):
+            _die(f"invalid ContextKit update ref in {owner}", exit_code)
+        decoded = component
+        for _ in range(3):
+            next_value = urllib.parse.unquote(decoded)
+            if next_value == decoded:
+                break
+            decoded = next_value
+        if decoded in {".", ".."} or "/" in decoded or "\\" in decoded:
+            _die(f"invalid ContextKit update ref in {owner}", exit_code)
+    return value
+
+
+def _release_url(source: UpdateSource, rel: str = RELEASE_MANIFEST) -> str:
+    quoted = "/".join(urllib.parse.quote(part) for part in rel.split("/"))
+    quoted_ref = "/".join(urllib.parse.quote(part) for part in source.ref.split("/"))
+    return f"{source.base}/{quoted_ref}/{quoted}"
+
+
+def _fetch_update_bytes(source: UpdateSource, rel: str) -> bytes:
+    url = _release_url(source, rel)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as response:
+            content = response.read(MAX_UPDATE_FILE_BYTES + 1)
+    except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
+        _die(f"ContextKit update fetch failed: {url}\n{exc}", 5)
+    if len(content) > MAX_UPDATE_FILE_BYTES:
+        _die(f"ContextKit update source is too large: {url}", 6)
+    return content
+
+
+def _release_version(value: Any, source: str, exit_code: int = 6) -> tuple[int, int, int]:
+    if not isinstance(value, str) or not re.fullmatch(r"(?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5})\.(?:0|[1-9][0-9]{0,5})", value):
+        _die(f"invalid ContextKit release version in {source}: expected MAJOR.MINOR.PATCH", exit_code)
+    try:
+        parts = tuple(int(part) for part in value.split("."))
+    except (TypeError, ValueError, OverflowError):
+        _die(f"invalid ContextKit release version in {source}: expected bounded integers", exit_code)
+    if any(part > 999999 for part in parts):
+        _die(f"invalid ContextKit release version in {source}: component exceeds 999999", exit_code)
+    return parts  # type: ignore[return-value]
+
+
+def _validate_release_manifest(value: Any, source: str, exit_code: int = 6) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        _die(f"invalid ContextKit release manifest in {source}: expected a JSON object", exit_code)
+    if set(value) != {"schema", "version", "files"}:
+        _die(f"invalid ContextKit release manifest in {source}: unexpected or missing fields", exit_code)
+    schema = value.get("schema")
+    if not isinstance(schema, int) or isinstance(schema, bool) or schema != 1:
+        _die(f"invalid ContextKit release manifest in {source}: unsupported schema", exit_code)
+    _release_version(value.get("version"), source, exit_code)
+    files = value.get("files")
+    if not isinstance(files, dict) or not files:
+        _die(f"invalid ContextKit release manifest in {source}: files must be a non-empty object", exit_code)
+    required = {"bin/contextkit", "bundle/runtime.md"}
+    seen: set[str] = set()
+    for rel, digest in files.items():
+        if not isinstance(rel, str) or not rel or "\\" in rel or any(ord(char) < 32 for char in rel):
+            _die(f"invalid ContextKit release manifest in {source}: file path is unsafe", exit_code)
+        try:
+            path = Path(rel)
+        except (OSError, ValueError):
+            _die(f"invalid ContextKit release manifest in {source}: file path is unsafe", exit_code)
+        allowed = rel == "bin/contextkit" or rel.startswith(PRODUCT_FILE_PREFIXES)
+        if path.is_absolute() or any(part in {"", ".", ".."} or part.startswith(".") for part in path.parts) or path.as_posix() != rel or not allowed:
+            _die(f"invalid ContextKit release path in {source}: {rel}", exit_code)
+        if rel in seen:
+            _die(f"duplicate ContextKit release path in {source}: {rel}", exit_code)
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
+            _die(f"invalid sha256 for {rel} in {source}", exit_code)
+        seen.add(rel)
+    ordered = sorted(seen)
+    for index, rel in enumerate(ordered):
+        prefix = rel + "/"
+        if any(other.startswith(prefix) for other in ordered[index + 1:]):
+            _die(f"invalid ContextKit release manifest in {source}: file/directory path collision", exit_code)
+    missing = sorted(required - seen)
+    if missing:
+        _die(f"invalid ContextKit release manifest in {source}: missing {', '.join(missing)}", exit_code)
+    if not any(rel.startswith("guides/") for rel in seen):
+        _die(f"invalid ContextKit release manifest in {source}: no guides", exit_code)
+    if not any(rel.startswith("templates/") for rel in seen):
+        _die(f"invalid ContextKit release manifest in {source}: no templates", exit_code)
+    return value
+
+
+def _manifest_bytes(value: dict[str, Any]) -> bytes:
+    return (json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _json_without_duplicates(content: bytes, source: str, exit_code: int) -> Any:
+    def object_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError("duplicate JSON object key")
+            value[key] = item
+        return value
+
+    try:
+        return json.loads(content.decode("utf-8"), object_pairs_hook=object_pairs)
+    except (UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        _die(f"invalid ContextKit JSON in {source}: {exc}", exit_code)
+
+
+def _remote_release(source: UpdateSource) -> tuple[dict[str, Any], bytes, str]:
+    url = _release_url(source)
+    content = _fetch_update_bytes(source, RELEASE_MANIFEST)
+    value = _json_without_duplicates(content, url, 6)
+    manifest = _validate_release_manifest(value, url)
+    pin = os.environ.get("CONTEXTKIT_SHA256")
+    if pin is not None:
+        if not re.fullmatch(r"[0-9a-f]{64}", pin):
+            _die("CONTEXTKIT_SHA256 must be a lowercase sha256 digest", 6)
+        if manifest["files"].get("bin/contextkit") != pin:
+            _die("ContextKit update manager digest does not match CONTEXTKIT_SHA256", 6)
+    return manifest, _manifest_bytes(manifest), url
+
+
+def _installed_release(home: Path) -> tuple[dict[str, Any] | None, bytes | None]:
+    path = home / RELEASE_MANIFEST
+    if not path.exists():
+        return None, None
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        _die(f"installed ContextKit release manifest is invalid: {path}\n{exc}", 7)
+    value = _json_without_duplicates(content, str(path), 7)
+    manifest = _validate_release_manifest(value, str(path), 7)
+    return manifest, _manifest_bytes(manifest)
+
+
+def _installed_provenance(home: Path, current: dict[str, Any] | None, current_bytes: bytes | None) -> tuple[dict[str, Any] | None, list[str]]:
+    path = home / INSTALL_PROVENANCE
+    if not path.exists():
+        return None, ([f"missing managed provenance: {path}"] if current is not None else [])
+    if current is None or current_bytes is None:
+        _die(f"ContextKit update needs review: provenance exists without a release manifest: {path}", 7)
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        _die(f"ContextKit update cannot read installed provenance: {exc}", 7)
+    value = _json_without_duplicates(content, str(path), 7)
+    schema = value.get("schema") if isinstance(value, dict) else None
+    if not isinstance(value, dict) or set(value) != {"schema", "version", "manifest_sha256", "source"} or not isinstance(schema, int) or isinstance(schema, bool) or schema != 1:
+        _die(f"ContextKit update needs review: invalid installed provenance schema: {path}", 7)
+    _release_version(value.get("version"), str(path), 7)
+    if value.get("version") != current.get("version"):
+        _die(f"ContextKit update needs review: installed provenance version does not match release manifest", 7)
+    expected_hash = hashlib.sha256(current_bytes).hexdigest()
+    if value.get("manifest_sha256") != expected_hash:
+        _die(f"ContextKit update needs review: installed provenance manifest hash does not match release manifest", 7)
+    source = value.get("source")
+    if not isinstance(source, dict) or set(source) != {"base", "ref", "manifest"}:
+        _die(f"ContextKit update needs review: installed provenance source is invalid", 7)
+    base = _validate_source_base(source.get("base"), "installed provenance", 7)
+    ref = _validate_source_ref(source.get("ref"), "installed provenance", 7)
+    installed_source = UpdateSource(base, ref, "installed", "installed")
+    if source.get("manifest") != _release_url(installed_source):
+        _die(f"ContextKit update needs review: installed provenance manifest URL is inconsistent", 7)
+    return value, []
+
+
+def _update_source(provenance: dict[str, Any] | None) -> UpdateSource:
+    installed_source = provenance.get("source") if provenance else {}
+    explicit_base = os.environ.get("CONTEXTKIT_RAW_BASE")
+    explicit_ref = os.environ.get("CONTEXTKIT_REF")
+    if explicit_ref is None:
+        explicit_ref = os.environ.get("CONTEXTKIT_TAG")
+    if explicit_base is not None:
+        base = _validate_source_base(explicit_base, "CONTEXTKIT_RAW_BASE")
+        base_origin = "environment"
+    elif installed_source:
+        base = _validate_source_base(installed_source.get("base"), "installed provenance", 7)
+        base_origin = "installed"
+    else:
+        base = DEFAULT_RAW_BASE
+        base_origin = "default"
+    if explicit_ref is not None:
+        ref = _validate_source_ref(explicit_ref, "CONTEXTKIT_REF")
+        ref_origin = "environment"
+    elif installed_source:
+        ref = _validate_source_ref(installed_source.get("ref"), "installed provenance", 7)
+        ref_origin = "installed"
+    else:
+        ref = "main"
+        ref_origin = "default"
+    return UpdateSource(base, ref, base_origin, ref_origin)
+
+
+def _installed_payload_findings(home: Path, manifest: dict[str, Any]) -> list[str]:
+    findings: list[str] = []
+    expected_destinations = {_update_destination(rel).as_posix() for rel in manifest["files"]}
+    for rel, expected in sorted(manifest["files"].items()):
+        path = home / _update_destination(rel)
+        if not path.is_file() or path.is_symlink():
+            findings.append(f"missing or non-canonical installed file: {path}")
+            continue
+        try:
+            actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            findings.append(f"cannot read installed file {path}: {exc}")
+            continue
+        if actual != expected:
+            findings.append(f"installed checksum differs: {path}")
+    for directory in ("bundle", "guides", "templates"):
+        root = home / directory
+        if not root.is_dir():
+            continue
+        for path in sorted(item for item in root.rglob("*") if item.is_file() or item.is_symlink()):
+            rel = path.relative_to(home).as_posix()
+            if rel not in expected_destinations:
+                findings.append(f"untracked installed file: {path}")
+    return findings
+
+
+def _update_status() -> tuple[dict[str, Any], dict[str, Any], bytes, UpdateSource, InstallPaths]:
+    paths = _install_paths()
+    current, current_bytes = _installed_release(paths.home)
+    provenance, state_findings = _installed_provenance(paths.home, current, current_bytes)
+    source = _update_source(provenance)
+    if provenance is not None:
+        installed_channel = provenance["source"]
+        if source.base != installed_channel["base"] or source.ref != installed_channel["ref"]:
+            state_findings.append("selected update source differs from installed managed provenance")
+    remote, remote_bytes, manifest_url = _remote_release(source)
+    result: dict[str, Any] = {
+        "status": "update_available",
+        "changed": False,
+        "current": None if current is None else {
+            "version": current["version"],
+            "manifest_sha256": hashlib.sha256(current_bytes or b"").hexdigest(),
+        },
+        "available": {
+            "version": remote["version"],
+            "manifest_sha256": hashlib.sha256(remote_bytes).hexdigest(),
+        },
+        "source": {
+            "base": source.base,
+            "ref": source.ref,
+            "manifest": manifest_url,
+            "base_origin": source.base_origin,
+            "ref_origin": source.ref_origin,
+        },
+        "installed_source": provenance,
+        "install_home": str(paths.home),
+    }
+    if current is None:
+        result["reason"] = "no installed release manifest"
+        return result, remote, remote_bytes, source, paths
+    current_version = _release_version(current["version"], str(paths.home / RELEASE_MANIFEST), 7)
+    remote_version = _release_version(remote["version"], manifest_url)
+    if remote_version < current_version:
+        _die(
+            f"ContextKit update needs review: source version {remote['version']} is older than installed version {current['version']}",
+            7,
+        )
+    if remote_version == current_version and current_bytes != remote_bytes:
+        _die(
+            f"ContextKit update needs review: version {remote['version']} has different release manifests",
+            7,
+        )
+    state_findings += _installed_payload_findings(paths.home, current)
+    if not paths.link.is_symlink():
+        state_findings.append(f"missing managed command symlink: {paths.link}")
+    if state_findings:
+        result["reason"] = "installed managed state differs from its release contract"
+        result["findings"] = state_findings
+        return result, remote, remote_bytes, source, paths
+    if current_bytes == remote_bytes:
+        result["status"] = "up_to_date"
+        result["reason"] = "installed and available release manifests match"
+    else:
+        result["reason"] = "a newer release is available"
+    return result, remote, remote_bytes, source, paths
+
+
+def _update_destination(rel: str) -> Path:
+    path = Path(rel)
+    if rel == "bin/contextkit":
+        return Path(".manager") / "contextkit"
+    return path
+
+
+def _stage_update(paths: InstallPaths, source: UpdateSource, manifest: dict[str, Any], manifest_bytes: bytes) -> Path:
+    paths.home.parent.mkdir(parents=True, exist_ok=True)
+    stage = Path(tempfile.mkdtemp(prefix=_residue_prefix(paths, "stage"), dir=str(paths.home.parent)))
+    try:
+        for rel, expected in sorted(manifest["files"].items()):
+            content = _fetch_update_bytes(source, rel)
+            actual = hashlib.sha256(content).hexdigest()
+            if actual != expected:
+                _die(f"ContextKit update checksum mismatch for {rel}: expected {expected}, got {actual}", 6)
+            if rel == "bin/contextkit" and os.environ.get("CONTEXTKIT_SHA256") not in {None, actual}:
+                _die("downloaded ContextKit manager does not match CONTEXTKIT_SHA256", 6)
+            destination = stage / _update_destination(rel)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(content)
+        manager = stage / ".manager" / "contextkit"
+        content = manager.read_bytes()
+        if not content.startswith(b"#!/usr/bin/env python3"):
+            _die("fetched bin/contextkit does not look like the ContextKit manager", 6)
+        try:
+            compile(content.decode("utf-8"), "bin/contextkit", "exec")
+        except (UnicodeError, SyntaxError) as exc:
+            _die(f"fetched bin/contextkit does not compile: {exc}", 6)
+        manager.chmod(manager.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+        (stage / RELEASE_MANIFEST).write_bytes(manifest_bytes)
+        provenance = {
+            "schema": 1,
+            "version": manifest["version"],
+            "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "source": {"base": source.base, "ref": source.ref, "manifest": _release_url(source)},
+        }
+        (stage / INSTALL_PROVENANCE).write_bytes(_manifest_bytes(provenance))
+        return stage
+    except BaseException:
+        cleanup_error = _cleanup_tree(stage)
+        if cleanup_error:
+            _die(
+                f"ContextKit update preparation failed and stage cleanup is incomplete; residue preserved at {stage}: {cleanup_error}",
+                7,
+            )
+        raise
+
+
+def _replace_install(paths: InstallPaths, stage: Path) -> str:
+    _validate_existing_install_paths(paths)
+    paths.home.mkdir(parents=True, exist_ok=True)
+    paths.bin_dir.mkdir(parents=True, exist_ok=True)
+    backup = Path(tempfile.mkdtemp(prefix=_residue_prefix(paths, "backup"), dir=str(paths.home.parent)))
+    names = [".manager", "bundle", "guides", "templates", RELEASE_MANIFEST, INSTALL_PROVENANCE]
+    moved_old: list[str] = []
+    installed_new: list[str] = []
+    try:
+        for name in names:
+            destination = paths.home / name
+            incoming = stage / name
+            if destination.exists() or destination.is_symlink():
+                os.replace(destination, backup / name)
+                moved_old.append(name)
+            os.replace(incoming, destination)
+            installed_new.append(name)
+        link_stage = Path(tempfile.mkdtemp(prefix=_residue_prefix(paths, "link"), dir=str(paths.bin_dir)))
+        temp_link = link_stage / "contextkit"
+        try:
+            temp_link.symlink_to(paths.manager)
+            os.replace(temp_link, paths.link)
+        finally:
+            cleanup_error = _cleanup_tree(link_stage)
+            if cleanup_error:
+                _die(
+                    f"ContextKit update command-link cleanup is incomplete; residue preserved at {link_stage}: {cleanup_error}",
+                    7,
+                )
+    except BaseException as original:
+        rollback_errors: list[str] = []
+        for name in reversed(installed_new):
+            destination = paths.home / name
+            try:
+                if destination.is_dir() and not destination.is_symlink():
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink(missing_ok=True)
+            except OSError as exc:
+                rollback_errors.append(f"remove {destination}: {exc}")
+        for name in reversed(moved_old):
+            saved = backup / name
+            if saved.exists() or saved.is_symlink():
+                try:
+                    os.replace(saved, paths.home / name)
+                except OSError as exc:
+                    rollback_errors.append(f"restore {name}: {exc}")
+        if rollback_errors:
+            _die(
+                "ContextKit update failed and rollback is incomplete; "
+                f"backup preserved at {backup}; " + "; ".join(rollback_errors),
+                7,
+            )
+        cleanup_error = _cleanup_tree(backup)
+        if cleanup_error:
+            _die(
+                "ContextKit update failed; rollback completed but backup cleanup is incomplete; "
+                f"residue preserved at {backup}: {cleanup_error}",
+                7,
+            )
+        raise original
+    cleanup_error = _cleanup_tree(backup)
+    if cleanup_error:
+        _die(
+            f"ContextKit was installed, but backup cleanup is incomplete; residue preserved at {backup}: {cleanup_error}",
+            7,
+        )
+    return str(paths.link)
+
+
+def _apply_update(paths: InstallPaths, source: UpdateSource, manifest: dict[str, Any], manifest_bytes: bytes) -> str:
+    stage = _stage_update(paths, source, manifest, manifest_bytes)
+    try:
+        result = _replace_install(paths, stage)
+    except BaseException as original:
+        cleanup_error = _cleanup_tree(stage)
+        if cleanup_error:
+            _die(
+                f"ContextKit update failed and stage cleanup is incomplete; residue preserved at {stage}: {cleanup_error}",
+                7,
+            )
+        raise original
+    cleanup_error = _cleanup_tree(stage)
+    if cleanup_error:
+        _die(
+            f"ContextKit was installed, but stage cleanup is incomplete; residue preserved at {stage}: {cleanup_error}",
+            7,
+        )
+    return result
+
+
+def cmd_update(args: argparse.Namespace) -> None:
+    if args.apply and not args.yes and not (sys.stdin.isatty() and sys.stderr.isatty()):
+        _die("contextkit update --apply requires --yes when no interactive terminal is available", 6)
+    status, manifest, manifest_bytes, source, paths = _update_status()
+    if args.check or status["status"] == "up_to_date":
+        _emit(status, args.json)
+        return
+    if not args.yes:
+        sys.stderr.write(
+            f"Install ContextKit {manifest['version']} from {source.base} at ref {source.ref}? [y/N] "
+        )
+        answer = sys.stdin.readline().strip().lower()
+        if answer not in {"y", "yes"}:
+            _die("ContextKit update aborted", 1)
+    link = _apply_update(paths, source, manifest, manifest_bytes)
+    installed_manifest, installed_bytes = _installed_release(paths.home)
+    installed_provenance, post_findings = _installed_provenance(paths.home, installed_manifest, installed_bytes)
+    if installed_manifest is None or installed_bytes is None or installed_provenance is None or post_findings:
+        _die("ContextKit update completed but installed state could not be verified", 7)
+    status.update({
+        "status": "updated",
+        "changed": True,
+        "symlink": link,
+        "current": {
+            "version": installed_manifest["version"],
+            "manifest_sha256": hashlib.sha256(installed_bytes).hexdigest(),
+        },
+        "installed_source": installed_provenance,
+        "reason": "installed release and managed provenance match the selected source",
+    })
+    status.pop("findings", None)
+    _emit(status, args.json)
 
 
 def _fetch_bundle(rel: Path) -> str | None:
@@ -268,7 +921,7 @@ def _fetch_bundle(rel: Path) -> str | None:
     try:
         with urllib.request.urlopen(url, timeout=8) as response:
             return response.read().decode("utf-8")
-    except (OSError, UnicodeError, urllib.error.URLError):
+    except (OSError, ValueError, UnicodeError, urllib.error.URLError, http.client.HTTPException):
         return None
 
 
@@ -277,7 +930,7 @@ def _fetch_guide(rel: Path) -> str | None:
     try:
         with urllib.request.urlopen(url, timeout=8) as response:
             return response.read().decode("utf-8")
-    except (OSError, UnicodeError, urllib.error.URLError):
+    except (OSError, ValueError, UnicodeError, urllib.error.URLError, http.client.HTTPException):
         return None
 
 
@@ -3029,6 +3682,8 @@ HELP = """contextkit — manager for repo-backed agent project bodies and runtim
 
 Commands:
   contextkit help
+  contextkit update --check [--json]
+  contextkit update --apply [--yes] [--json]
   contextkit bootstrap [--target codex|claude] [--target ...] [--with-template] [--yes] [--json]
   contextkit doctor [--json]
   contextkit init [--with-layers|--with-template] [--json]
@@ -3049,6 +3704,11 @@ Commands:
   contextkit templates
 
 Environment:
+  CONTEXTKIT_HOME        installed product root; defaults to ~/.contextkit
+  CONTEXTKIT_BIN         PATH directory for the contextkit symlink
+  CONTEXTKIT_RAW_BASE    explicit release source base; otherwise installed provenance, then public repository
+  CONTEXTKIT_REF         explicit release ref; otherwise installed provenance, then main (CONTEXTKIT_TAG is compatible)
+  CONTEXTKIT_SHA256      optional lowercase sha256 pin for the manager that may be installed
   CONTEXTKIT_MEMORY_DIR  persistent project-memory root; defaults to ./memory
 """
 
@@ -3058,6 +3718,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
 
     sub.add_parser("help", add_help=False).set_defaults(func=lambda _args: _emit(HELP))
+    p = sub.add_parser("update", help="check or update the installed ContextKit distribution")
+    update_mode = p.add_mutually_exclusive_group(required=True)
+    update_mode.add_argument("--check", action="store_true", help="compare installed and available releases without writing")
+    update_mode.add_argument("--apply", action="store_true", help="install the available release")
+    p.add_argument("--yes", action="store_true", help="approve installation without an interactive prompt")
+    p.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    p.set_defaults(func=cmd_update)
+
     p = sub.add_parser("bootstrap")
     p.add_argument("--target", choices=["codex", "claude"], action="append")
     p.add_argument("--with-template", action="store_true")

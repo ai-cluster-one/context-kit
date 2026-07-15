@@ -1,0 +1,31 @@
+{
+  "files": {
+    "bin/contextkit": "730c0f69f2a54cb328e806a4c4d4062b1fff1b98dcabf3b10177631ae098ab1a",
+    "bundle/runtime.md": "e11f45fca24d0e023744ae6a69362f8449c55aaa890bfe073162d3e0b4907dd5",
+    "guides/agent-team.md": "0c44546f297afbb0a4bfd2b66c18300c2a0ccfdbcb01b579f1cd67cad442ff21",
+    "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
+    "guides/audit.md": "fc7ba77fbb27596f1714d0c1ec54ab145d9dc68fbc53ed069a656b8e6630916f",
+    "guides/authoring.md": "968f8033b7a732c18199425cc2bdfd751c1a2c71d83a18db38201c62a9de2c47",
+    "guides/bootstrap.md": "1a73cba6c8245f95ea6e0451bc22c9703e54ac6baa24f65dc83533d523cba0f8",
+    "guides/capabilities.md": "b7d3de60125dd0124da3aee686cc5f398b9c4998e1aa04ce769c496d63aaef3f",
+    "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
+    "guides/global-context.md": "d8375cca0fc50896bff4fd730e6310b20b2213e6fe93c83b4e8120fd00c86b46",
+    "guides/hooks.md": "e85a01538645593b8a97827bc8dee08a6dd64daae3f2f7ef05e2ca4ced84d826",
+    "guides/memory.md": "814aba72a7f09bcc744d553acd3a62895a60d1cbce67ca85db19f3dc7ead1f15",
+    "guides/migration.md": "9e4c99fb7af933ff9cfa49a67ca7dab0f2ccc346c878e8d317d686356dde814a",
+    "guides/routines.md": "9439912d5e22343dc7c0d6172670b5e7ad22dfd770af45000dabe21281c0e014",
+    "guides/validation.md": "74508d01ba952d81cba025a6d626e857f6b73980bac9a491442e826a63eda4b8",
+    "templates/README.md": "724ad9e84a9828fb4f9576a59cf5870396db24a73235955c0e970cab4b26346e",
+    "templates/context/architecture/RUNTIME.md": "dc3f6e7a032f484a245710bd1f35aebf689fdc78fc5fb7a2fa3db1506a515416",
+    "templates/context/architecture/SERVICES.md": "a3b1aa08fd30b1660db34d0a5af9a83dba60d822bf0497bbe4bdfcb26f3db49d",
+    "templates/context/guidelines/ASSETS.md": "f6461866802bfd223415b84e7663ff9f474896b672459f2f5ff1e34a02287a09",
+    "templates/context/guidelines/CONSTITUTION.md": "609d0cb63bbc41440c18f98c2596cfedfe531382da2ddbe972dd9cfdd2492252",
+    "templates/context/guidelines/LIMITATIONS.md": "337603bc3a22586c2fb8cb12e127cb1333fd764e1ed8a8c364f0ef9379559a59",
+    "templates/context/identity/AGENT.md": "f483f17832523c67ff54e3ad595569fd4f8ead459891d655f81747ab0443027f",
+    "templates/context/identity/MISSION.md": "c9cc1f11b9e06e64acef07a18e9b8c293cde4e4ef20eeab03132b59e75a5c4c0",
+    "templates/context/identity/OWNER.md": "771aee2348625d1d5c839bdf98369c894a9a70b640afab9dc219cb9336ad7d2c",
+    "templates/context/identity/PEOPLE.md": "2497a917061e7cfc49f7b3bd96d8c69d62bac3a69afa50243e9b9df313a62c3a"
+  },
+  "schema": 1,
+  "version": "0.1.0"
+}
