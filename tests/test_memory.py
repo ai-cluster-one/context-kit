@@ -251,38 +251,34 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual([item["code"] for item in findings], ["empty-memory-layer"])
         self.assertEqual(findings[0]["rule_source"], "contextkit guide memory")
 
-    def test_audit_reports_memory_that_duplicates_live_context(self) -> None:
+    def test_audit_does_not_emit_memory_semantic_duplicate_findings(self) -> None:
         claim = "Every release candidate preserves this exact durable operational constraint before any production deployment begins"
         context_path = self.project / "context" / "guidelines" / "RELEASE.md"
         context_path.parent.mkdir(parents=True)
         context_path.write_text(self.context_file(claim + "."))
-        memory_path = self.project / "memory" / "note.md"
-        memory_path.parent.mkdir()
-        memory_path.write_text("# Note\n\n" + claim + ".\n")
+        memory_root = self.project / "memory"
+        memory_root.mkdir()
+        (memory_root / "note.md").write_text("# Note\n\n" + claim + ".\n")
+        (memory_root / "duplicate.md").write_text("# Duplicate\n\n" + claim + ".\n")
 
         audit = self.run_cli("audit", "--json")
         self.assertEqual(audit.returncode, 0, audit.stderr)
         findings = json.loads(audit.stdout)["findings"]
-        duplicates = [item for item in findings if item["code"] == "memory-duplicates-live-fact"]
-        self.assertEqual(len(duplicates), 1)
-        self.assertEqual(duplicates[0]["rule_source"], "contextkit guide memory; contextkit guide authoring")
+        removed_semantic_codes = {"memory-duplicates-live-fact", "duplicate-memory-claim"}
+        self.assertTrue(removed_semantic_codes.isdisjoint(item["code"] for item in findings))
 
     def test_bootstrap_uses_memory_audit_findings(self) -> None:
         subprocess.run(["git", "init"], cwd=self.project, text=True, capture_output=True, check=True)
-        claim = "Every bootstrap review preserves this exact durable release constraint before production deployment begins"
-        context_path = self.project / "context" / "guidelines" / "BOOTSTRAP.md"
-        context_path.parent.mkdir(parents=True)
-        context_path.write_text(self.context_file(claim + "."))
-        memory_path = self.project / "memory" / "note.md"
+        memory_path = self.project / "memory" / "unexpected.txt"
         memory_path.parent.mkdir()
-        memory_path.write_text("# Note\n\n" + claim + ".\n")
+        memory_path.write_text("This file type is not compiled into project memory.\n")
 
         bootstrapped = self.run_cli("bootstrap", "--yes", "--json")
         self.assertEqual(bootstrapped.returncode, 0, bootstrapped.stderr)
         result = json.loads(bootstrapped.stdout)
         self.assertFalse(result["ready"])
         codes = [item["code"] for item in result["audit"]["findings"]]
-        self.assertIn("memory-duplicates-live-fact", codes)
+        self.assertIn("uncompiled-memory-file", codes)
 
     def test_new_claude_settings_disable_auto_memory_without_touching_codex_memory(self) -> None:
         installed = self.run_cli("install-hooks", "--target", "claude", "--target", "codex", "--json")

@@ -60,6 +60,7 @@ GUIDE_TOPICS = [
     "assets",
     "routines",
     "audit",
+    "groom",
     "destructive",
     "migration",
     "hooks",
@@ -2989,32 +2990,6 @@ def _weak_description(description: str) -> bool:
     return len(set(w.lower() for w in words) - generic) < 4
 
 
-def _content_owner_hint(rel: str, text: str) -> str | None:
-    lowered = text.lower()
-    if "/guidelines/" in rel and sum(word in lowered for word in
-                                    ["runtime", "container", "deployment", "service architecture"]) >= 2:
-        return "This reads like architecture; consider `context/architecture/`."
-    if "/architecture/" in rel and sum(word in lowered for word in
-                                      ["always", "never", "must", "limitation", "do not"]) >= 4:
-        return "This reads like doctrine or constraints; consider `context/guidelines/`."
-    if "/identity/" in rel and sum(word in lowered for word in
-                                  ["cli", "endpoint", "container", "database", "queue"]) >= 3:
-        return "This reads like runtime/service architecture; consider `context/architecture/`."
-    return None
-
-
-def _historical_framing_hint(text: str) -> str | None:
-    if re.search(r"\b(formerly|previously|used to|moved from|migrated from|unlike)\b", text, flags=re.I):
-        return "Rewrite live doctrine in present tense; keep migration history in git, assets, or audit reports."
-    return None
-
-
-def _running_state_hint(text: str) -> str | None:
-    if re.search(r"\b(todo|pending|next action|checkpoint|last sync(?:ed)?|current balance|open task)\b", text, flags=re.I):
-        return "Live context excludes running task state; move work tracking to the project work system or assets."
-    return None
-
-
 def _hard_wrapped_prose_hint(text: str) -> str | None:
     in_fence = False
     previous_can_continue = False
@@ -3042,24 +3017,6 @@ def _hard_wrapped_prose_hint(text: str) -> str | None:
             return "Keep each prose paragraph and list item on one physical line; let the editor or renderer wrap it visually."
         previous_can_continue = True
     return None
-
-
-def _normalized_claim_text(text: str) -> list[str]:
-    claims: list[str] = []
-    for raw in re.split(r"[\n.]", text):
-        line = re.sub(r"\s+", " ", raw.strip().lower())
-        line = re.sub(r"[`*_>#-]", "", line).strip()
-        if not line:
-            continue
-        if len(line.split()) < 10:
-            continue
-        if line.startswith(("the ", "a ", "an ")) or any(ch.isalpha() for ch in line):
-            claims.append(line)
-    return claims
-
-
-def _normalized_claims(item: ContextFile) -> list[str]:
-    return _normalized_claim_text(item.body)
 
 
 def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Finding]:
@@ -3104,7 +3061,6 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
         if ctx:
             files.append(ctx)
 
-    claim_owners: dict[str, list[str]] = {}
     for item in files:
         rel = item.rel.as_posix()
         if _weak_description(item.description):
@@ -3133,42 +3089,6 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 "Prefer self-contained wording and let compiled metadata route sibling files.",
                 "contextkit guide authoring",
             ))
-        asset_live_pattern = re.compile(
-            r"(?:see|load|read|per|according to|based on|from)\s+`?(?:\.assets|assets)/(?:sessions|plans|research)/"
-            r"|\]\((?:\.assets|assets)/(?:sessions|plans|research)/",
-            flags=re.I,
-        )
-        if asset_live_pattern.search(item.body):
-            findings.append(Finding(
-                "warning", "asset-as-live-doctrine", rel,
-                "File points at historical assets as if they are live doctrine.",
-                "Promote durable facts into the live owning layer; leave historical assets as evidence.",
-                "contextkit guide authoring; contextkit guide assets",
-            ))
-        hint = _content_owner_hint(rel, item.body)
-        if hint:
-            findings.append(Finding(
-                "info", "taxonomy-fit", rel,
-                "File may live at the wrong context altitude.",
-                hint,
-                "contextkit guide authoring",
-            ))
-        hint = _historical_framing_hint(item.body)
-        if hint:
-            findings.append(Finding(
-                "warning", "historical-framing", rel,
-                "Live context appears to define itself through history or comparison.",
-                hint,
-                "contextkit guide authoring",
-            ))
-        hint = _running_state_hint(item.body)
-        if hint:
-            findings.append(Finding(
-                "warning", "running-state-in-context", rel,
-                "Live context appears to contain running task state.",
-                hint,
-                "contextkit guide authoring",
-            ))
         hint = _hard_wrapped_prose_hint(item.body)
         if hint:
             findings.append(Finding(
@@ -3177,38 +3097,7 @@ def _audit_context_files(root: Path, paths: list[Path] | None = None) -> list[Fi
                 hint,
                 "contextkit guide authoring",
             ))
-        for claim in _normalized_claims(item):
-            claim_owners.setdefault(claim, []).append(rel)
-
-    for claim, owners in sorted(claim_owners.items()):
-        unique = sorted(set(owners))
-        if len(unique) > 1:
-            findings.append(Finding(
-                "warning", "duplicate-live-fact", ", ".join(unique),
-                f"Same durable-looking claim appears in {len(unique)} live files.",
-                claim[:220],
-                "contextkit guide authoring",
-            ))
     return findings
-
-
-def _live_context_claim_owners(root: Path) -> dict[str, list[str]]:
-    cfg = _config(root)
-    context_dir = Path(cfg["sources"]["context"])
-    sourced_paths: list[tuple[Path, str]] = [
-        (path, "project") for path in sorted((root / context_dir).rglob("*.md"))
-    ]
-    global_context: Path | None = cfg["global_context"]
-    if global_context is not None and global_context.is_dir():
-        sourced_paths += [(path, "global") for path in sorted(global_context.rglob("*.md"))]
-    owners: dict[str, list[str]] = {}
-    for path, source in sourced_paths:
-        item, errors = _read_context_file(root, path, source)
-        if errors or item is None:
-            continue
-        for claim in _normalized_claims(item):
-            owners.setdefault(claim, []).append(item.rel.as_posix())
-    return owners
 
 
 def _audit_memory(root: Path, paths: list[Path] | None = None) -> list[Finding]:
@@ -3265,8 +3154,6 @@ def _audit_memory(root: Path, paths: list[Path] | None = None) -> list[Finding]:
             if (path if path.is_absolute() else root / path).suffix.lower() == ".md"
         ]
 
-    live_claims = _live_context_claim_owners(root)
-    memory_claims: dict[str, list[str]] = {}
     for path in markdown_paths:
         try:
             body = path.read_text()
@@ -3284,25 +3171,6 @@ def _audit_memory(root: Path, paths: list[Path] | None = None) -> list[Finding]:
                 "warning", "empty-memory-file", rel,
                 "Memory file contributes no project knowledge.",
                 "Remove the empty file or add the provisional note it is meant to preserve.",
-                "contextkit guide memory",
-            ))
-        for claim in _normalized_claim_text(visible_body):
-            memory_claims.setdefault(claim, []).append(rel)
-            if claim in live_claims:
-                owners = ", ".join(sorted(set(live_claims[claim])))
-                findings.append(Finding(
-                    "warning", "memory-duplicates-live-fact", f"{rel}, {owners}",
-                    "A memory claim duplicates current live context.",
-                    "Keep the live owner and remove or rewrite the provisional memory copy after verification.",
-                    "contextkit guide memory; contextkit guide authoring",
-                ))
-    for claim, owners in sorted(memory_claims.items()):
-        unique = sorted(set(owners))
-        if len(unique) > 1:
-            findings.append(Finding(
-                "warning", "duplicate-memory-claim", ", ".join(unique),
-                "The same provisional claim appears in multiple memory files.",
-                claim[:220],
                 "contextkit guide memory",
             ))
     return findings
@@ -3398,16 +3266,26 @@ def _require_git_for_mutation(root: Path) -> None:
 
 
 def cmd_groom(args: argparse.Namespace) -> None:
+    if not args.plan and not args.apply:
+        _emit(_read_guide("groom.md"))
+        return
     root = _find_project_root()
     if args.apply:
         _require_git_for_mutation(root)
         _emit(
-            "ContextKit v0 has no automatic groom patches yet.\n"
-            "Run `contextkit audit --write`, review the report, and apply changes deliberately."
+            "Legacy `contextkit groom --apply` does not apply semantic repairs.\n"
+            "Use `contextkit groom` and apply accepted source repairs deliberately."
         )
         return
     findings = _project_audit_findings(root)
-    lines = ["# ContextKit Groom Plan", "", f"Project: `{root}`", ""]
+    lines = [
+        "# ContextKit Legacy Groom Plan",
+        "",
+        f"Project: `{root}`",
+        "",
+        "This compatibility mode reports deterministic audit findings only. Use `contextkit groom` for semantic review.",
+        "",
+    ]
     if not findings:
         lines.append("No audit findings to groom.")
     else:
@@ -3826,9 +3704,9 @@ Commands:
   contextkit memory import <path> --provider <name> --plan|--apply [--json]
   contextkit audit [--write] [--json]
   contextkit audit-file <path> [--json]
-  contextkit groom --plan|--apply
+  contextkit groom [--plan|--apply]
   contextkit migrate --plan|--apply
-  contextkit guide [bootstrap|authoring|agent-team|global-context|memory|validation|assets|routines|audit|destructive|migration|hooks|capabilities]
+  contextkit guide [bootstrap|authoring|agent-team|global-context|memory|validation|assets|routines|audit|groom|destructive|migration|hooks|capabilities]
   contextkit templates
 
 Environment:
@@ -3940,7 +3818,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_audit_file)
 
     p = sub.add_parser("groom")
-    group = p.add_mutually_exclusive_group(required=True)
+    group = p.add_mutually_exclusive_group()
     group.add_argument("--plan", action="store_true")
     group.add_argument("--apply", action="store_true")
     p.set_defaults(func=cmd_groom)

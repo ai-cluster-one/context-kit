@@ -1,15 +1,16 @@
 {
   "files": {
-    "bin/contextkit": "0912f0e9c2d5d3fcae0c383213c5cfb8160579cc2933c19eaa1b0984aa4b7029",
+    "bin/contextkit": "2c272860d545a0988930075ae269bedefd2a49330f59cf6249800370bc657797",
     "bundle/runtime.md": "bb935c7c0a6f4ded22e122dd8e4b119465e113e03e103ae5c5d7b25479d5a4e2",
     "guides/agent-team.md": "0c44546f297afbb0a4bfd2b66c18300c2a0ccfdbcb01b579f1cd67cad442ff21",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
-    "guides/audit.md": "fc7ba77fbb27596f1714d0c1ec54ab145d9dc68fbc53ed069a656b8e6630916f",
+    "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "968f8033b7a732c18199425cc2bdfd751c1a2c71d83a18db38201c62a9de2c47",
     "guides/bootstrap.md": "1a73cba6c8245f95ea6e0451bc22c9703e54ac6baa24f65dc83533d523cba0f8",
     "guides/capabilities.md": "b7d3de60125dd0124da3aee686cc5f398b9c4998e1aa04ce769c496d63aaef3f",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
+    "guides/groom.md": "f5e2141d275d74628b7c15727518d7cf07e4cd8418cfedcb0896481a550f4478",
     "guides/hooks.md": "e85a01538645593b8a97827bc8dee08a6dd64daae3f2f7ef05e2ca4ced84d826",
     "guides/memory.md": "814aba72a7f09bcc744d553acd3a62895a60d1cbce67ca85db19f3dc7ead1f15",
     "guides/migration.md": "9e4c99fb7af933ff9cfa49a67ca7dab0f2ccc346c878e8d317d686356dde814a",
@@ -28,5 +29,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.1.1"
+  "version": "0.1.2"
 }

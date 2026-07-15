@@ -2,9 +2,15 @@
 
 Use this guide when reviewing a ContextKit project body or applying audit findings.
 
-This guide is the operational rule source for audits. It applies Rule Source Routing, One Fact One Home, Generated Output, and Project Stewardship, then routes each finding to the guide that owns the affected layer.
+This guide is the operational rule source for deterministic audits. It applies Rule Source Routing, One Fact One Home, Generated Output, and Project Stewardship, then routes each finding to the guide that owns the affected layer.
 
 Use `contextkit help` for exact command syntax.
+
+## Boundary
+
+`contextkit audit` reports deterministic findings that the manager can prove from project structure and authored metadata. It does not decide whether durable facts are duplicated, semantically misplaced, stale in meaning, or owned by the wrong artifact type.
+
+Use `contextkit guide groom` for agent-driven semantic review. Keep memory grooming under `contextkit guide memory`.
 
 ## Source Routing
 
@@ -57,9 +63,4 @@ Repair source truth, not symptoms.
 - Do not move material into `assets/` merely to silence a live-context warning.
 - Do not copy capability doctrine into ContextKit.
 
-After repairs:
-
-```sh
-contextkit build --target all
-contextkit audit
-```
+After repairs, load `contextkit guide validation` and follow its current sequence.

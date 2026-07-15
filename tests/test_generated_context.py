@@ -19,6 +19,7 @@ GUIDE_TOPICS = [
     "assets",
     "routines",
     "audit",
+    "groom",
     "destructive",
     "migration",
     "hooks",

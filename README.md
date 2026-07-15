@@ -14,7 +14,7 @@ Use ContextKit when multiple agents, hosts, or sessions need the same source of 
 - optional provider-neutral project memory;
 - always-on operating runtime loaded from the ContextKit bundle;
 - generated guide menu in runtime context;
-- on-demand guides for authoring, global context, memory, validation, audits, routines, assets, migration, hooks, and destructive operations;
+- on-demand guides for authoring, global context, memory, validation, audits, semantic grooming, routines, assets, migration, hooks, and destructive operations;
 - starter files for project onboarding and user-level global context;
 - advisory audits that point to the rule source for each finding;
 - generated runtime context rebuilt from source, never edited by hand.
@@ -261,6 +261,12 @@ Run the advisory audit:
 contextkit audit
 ```
 
+Open the agent-driven semantic grooming workflow:
+
+```sh
+contextkit groom
+```
+
 Write an audit report under `.contextkit/audits/`:
 
 ```sh
@@ -347,9 +353,10 @@ The current implementation covers the local, repo-backed agent body:
 - routine index inclusion from `routines/**/*.md` front matter;
 - capability index inclusion from `capabilities/settings.json`, installed capability snapshots, and visible project envelopes;
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`;
+- agent-driven semantic grooming without persistent groom state;
 - generated guide menu and on-demand guides loaded from ContextKit source/install;
 - project-body template gallery for onboarding and a separate global-context source starter.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename `.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms before building with ContextKit.
 
-Migration and groom apply modes are intentionally conservative in v0.
+Migration and legacy groom apply modes are intentionally conservative in v0.

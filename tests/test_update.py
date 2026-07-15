@@ -164,14 +164,14 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 5)
         self.assertIn("fetch failed", missing.stderr)
 
-    def test_previous_0_1_0_release_updates_to_current_patch_release(self) -> None:
-        self.write_release(version="0.1.0")
+    def test_previous_0_1_1_release_updates_to_current_patch_release(self) -> None:
+        self.write_release(version="0.1.1")
         installed = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(installed.returncode, 0, installed.stderr)
-        self.assertEqual(json.loads((self.install_home / "release.json").read_text())["version"], "0.1.0")
+        self.assertEqual(json.loads((self.install_home / "release.json").read_text())["version"], "0.1.1")
 
         current = json.loads((REPO_ROOT / "release.json").read_text())
-        self.assertEqual(current["version"], "0.1.1")
+        self.assertEqual(current["version"], "0.1.2")
         release = self.remote / self.ref
         shutil.rmtree(release)
         for rel in current["files"]:
@@ -184,14 +184,14 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(checked.returncode, 0, checked.stderr)
         check_report = json.loads(checked.stdout)
         self.assertEqual(check_report["status"], "update_available")
-        self.assertEqual(check_report["current"]["version"], "0.1.0")
-        self.assertEqual(check_report["available"]["version"], "0.1.1")
+        self.assertEqual(check_report["current"]["version"], "0.1.1")
+        self.assertEqual(check_report["available"]["version"], "0.1.2")
 
         applied = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(applied.returncode, 0, applied.stderr)
         apply_report = json.loads(applied.stdout)
         self.assertEqual(apply_report["status"], "updated")
-        self.assertEqual(apply_report["current"]["version"], "0.1.1")
+        self.assertEqual(apply_report["current"]["version"], "0.1.2")
         self.assertEqual(json.loads((self.install_home / "release.json").read_text()), current)
 
     def test_checksum_failure_does_not_replace_installed_release(self) -> None:

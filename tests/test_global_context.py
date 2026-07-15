@@ -472,7 +472,7 @@ class GlobalContextTests(unittest.TestCase):
         self.assertEqual(findings[0]["code"], "metadata")
         self.assertEqual(findings[0]["path"], str(broken.resolve()))
 
-    def test_audit_compares_claims_across_global_and_project_context(self) -> None:
+    def test_audit_does_not_emit_content_semantic_findings(self) -> None:
         self.configure_global()
         repeated_claim = "Every participating agent preserves this exact durable cross-project claim in one live owner only."
         (self.global_context / "SHARED.md").write_text(self.context_file(
@@ -489,16 +489,20 @@ class GlobalContextTests(unittest.TestCase):
             "Always load when checking duplicate doctrine across configured context sources.",
             "inline",
             20,
-            repeated_claim,
+            repeated_claim + " Formerly this runtime container deployment used different service architecture; pending work follows assets/sessions/example.md.",
         ))
 
         audit = self.run_cli("audit", "--json")
         self.assertEqual(audit.returncode, 0, audit.stderr)
         findings = json.loads(audit.stdout)["findings"]
-        duplicates = [item for item in findings if item["code"] == "duplicate-live-fact"]
-        self.assertEqual(len(duplicates), 1)
-        self.assertIn(str((self.global_context / "SHARED.md").resolve()), duplicates[0]["path"])
-        self.assertIn("context/guidelines/DUPLICATE.md", duplicates[0]["path"])
+        removed_semantic_codes = {
+            "asset-as-live-doctrine",
+            "taxonomy-fit",
+            "historical-framing",
+            "running-state-in-context",
+            "duplicate-live-fact",
+        }
+        self.assertTrue(removed_semantic_codes.isdisjoint(item["code"] for item in findings))
 
 
 if __name__ == "__main__":
