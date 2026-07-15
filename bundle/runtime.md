@@ -26,7 +26,7 @@ Before non-trivial work that changes behavior or durable project material, spans
 
 Configured global context is shared live doctrine outside the project that compiles through the same context-file contract. Use `contextkit guide global-context`.
 
-Project memory is provider-neutral provisional knowledge. It defaults to `memory/`; `CONTEXTKIT_MEMORY_DIR` selects an external source when deployment requires persistent storage. Current project context and owning-tool truth take precedence over memory. Use `contextkit memory add` to preserve a new session conclusion that future sessions must consider before it is ready for a durable owner. Never put secrets or an already-owned fact there. Use `contextkit memory status` to prove the active source, `contextkit guide memory` for capture and grooming judgment, and `contextkit help` for the live command contract.
+Use `contextkit memory add` to preserve a new conclusion that future sessions must consider before it has a durable owner. Never store secrets or duplicate an already-owned fact. Use `contextkit guide memory` for capture and grooming judgment.
 
 `assets/` is historical evidence: sessions, plans, research, and raw records. Use `contextkit guide assets`.
 
@@ -48,12 +48,6 @@ Command outputs name their rule sources. Load the named guide before repairing t
 
 Before editing, search for the existing owner.
 
-When changing project body, routines, hooks, or capability envelopes:
-
-```sh
-contextkit doctor
-contextkit build --target all
-contextkit audit
-```
+When changing project body, routines, hooks, or capability envelopes, load `contextkit guide validation` and follow its live sequence.
 
 Repair the owning source or tool surface, then rerun the command that exposed the problem.
