@@ -54,7 +54,7 @@ class AgentTeamTests(unittest.TestCase):
             self.assertIn("give execution to one subagent", generated)
             self.assertIn("`contextkit guide agent-team`", generated)
             self.assertIn("- `contextkit guide agent-team` - Agent Team Guide:", generated)
-            self.assertIn("Rule sources:", generated)
+            self.assertEqual(generated.count("# Guide Menu"), 1)
 
 
 if __name__ == "__main__":

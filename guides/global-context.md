@@ -10,6 +10,10 @@ Put a durable fact in global context only when the same fact should govern every
 
 Global context is another live doctrine source, not a fallback, copy, or override layer. Do not repeat a global fact locally to strengthen it. If global and project doctrine conflict, repair the owning source instead of relying on load order.
 
+## Initialize A Source
+
+Use `contextkit help` to discover the global-context initialization route and its live command behavior.
+
 ## Enable The Source
 
 Add one optional entry to the project's `.contextkit/config.toml`:
@@ -25,42 +29,21 @@ Remove `sources.global_context` to disable the source for that project.
 
 ## File Contract
 
-ContextKit recursively reads every `*.md` file under the configured directory. Each file uses the same YAML front matter as project context:
-
-```yaml
----
-title: Human title
-description: One-line routing description.
-load: inline|stub
-order: 100
----
-```
+ContextKit recursively reads every `*.md` file under the configured directory. Global files use the same context-file contract as project context; use `contextkit guide authoring` for the schema, descriptions, body voice, semantic line breaks, load-mode judgment, and context quality.
 
 Use `load: inline` only for compact doctrine needed in nearly every session across every participating project. Use `load: stub` for shared doctrine that should be discoverable and loaded only for relevant work.
 
 Global and project files form one ordered stream. Files sort by numeric `order`; global files precede project files when `order` is equal; paths break remaining ties. This ordering provides a deterministic reading sequence, not override semantics.
 
-Use `contextkit guide authoring` for descriptions, body voice, semantic line breaks, load-mode judgment, and context quality.
-
 ## Build And Provenance
 
-`contextkit build` reads the global directory at build time and compiles it into every requested host target. Generated context names the configured global directory, marks global inline sources, and exposes absolute paths for global stubs so the active agent can load them.
+`contextkit build` reads the global directory at build time and compiles it into every requested host target. Generated context identifies each global inline source and exposes a loadable absolute path for each global stub.
 
 ContextKit does not copy the global source into the project. Edit the owning global file and rebuild each participating project that should receive the change.
 
 ## Validation
 
-Run the normal sequence from every configured project:
-
-```sh
-contextkit doctor
-contextkit build --target all
-contextkit audit
-```
-
-`doctor` verifies that the configured global source exists and is a directory. `build` validates front matter and compilation. `audit` reviews both global and project context in one pass, including duplicate live claims across the boundary.
-
-Use an absolute path with `contextkit audit-file` when reviewing one global file.
+Use `contextkit guide validation` and follow its live sequence from every configured project. Semantic ownership across global and project doctrine still requires human or agent review.
 
 ## Safety And Portability
 
@@ -70,4 +53,4 @@ Keep shared doctrine in a visible dedicated directory or repository, not inside 
 
 ## Quality Bar
 
-A global source is healthy when every included project should inherit its facts, each fact has one live owner, inline cost is justified across projects, stubs are loadable from generated paths, and doctor/build/audit pass from every participating project.
+A global source is healthy when every included project should inherit its facts, each fact has one live owner, inline cost is justified across projects, stubs are loadable from generated paths, and every participating project passes the current validation guide.

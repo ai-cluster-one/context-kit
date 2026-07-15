@@ -34,8 +34,6 @@ Use `contextkit memory add` to preserve a new conclusion that future sessions mu
 
 `capabilities/` is the project envelope for enabled tools. ContextKit indexes awareness; capability internals remain tool-owned. Use `contextkit guide capabilities` and the tool's own help or doctor surface.
 
-Generated host context is delivery output. Rebuild it from source with `contextkit build`.
-
 ## Discovery
 
 Use `contextkit help` for exact command syntax.

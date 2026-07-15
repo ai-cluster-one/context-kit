@@ -15,7 +15,7 @@ Use ContextKit when multiple agents, hosts, or sessions need the same source of 
 - always-on operating runtime loaded from the ContextKit bundle;
 - generated guide menu in runtime context;
 - on-demand guides for authoring, global context, memory, validation, audits, routines, assets, migration, hooks, and destructive operations;
-- starter context templates for project onboarding;
+- starter files for project onboarding and user-level global context;
 - advisory audits that point to the rule source for each finding;
 - generated runtime context rebuilt from source, never edited by hand.
 
@@ -117,7 +117,7 @@ ContextKit separates the sources it ships:
 - `THESIS.md` - the worldview of ContextKit.
 - `bundle/` - shipped always-on runtime block.
 - `guides/` - shipped on-demand operating and authoring guides.
-- `templates/` - starter project-body files for onboarding and initialization.
+- `templates/` - project-body starters for onboarding and a separate global-context source starter.
 - `bin/` - the executable manager and command contracts.
 - `install.sh` - the installer for the manager, runtime, guides, and templates.
 
@@ -138,7 +138,7 @@ ContextKit's shipped runtime block lives under `bundle/`. Guides live under `gui
 
 Generated runtime context includes the full runtime block and a generated Guide Menu. Guide bodies are loaded on demand with `contextkit guide <topic>`.
 
-Global context is enabled per project with `sources.global_context` in `.contextkit/config.toml`. ContextKit recursively reads its Markdown files through the same front-matter, load-mode, and order contract as project `context/`. Use `contextkit guide global-context` for ownership, path, ordering, and validation rules.
+ContextKit can compile an optional external global-context source for projects that opt in. Use `contextkit help` to discover setup commands and `contextkit guide global-context` for ownership, authoring, ordering, and validation rules.
 
 ## Context Files
 
@@ -348,7 +348,7 @@ The current implementation covers the local, repo-backed agent body:
 - capability index inclusion from `capabilities/settings.json`, installed capability snapshots, and visible project envelopes;
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`;
 - generated guide menu and on-demand guides loaded from ContextKit source/install;
-- starter template gallery for project onboarding.
+- project-body template gallery for onboarding and a separate global-context source starter.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename `.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms before building with ContextKit.
 

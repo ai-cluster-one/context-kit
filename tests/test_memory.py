@@ -160,7 +160,7 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(len(list(persistent.glob("*.md"))), 1)
 
         generated = (self.project / ".codex" / "generated" / "context.md").read_text()
-        self.assertIn("- Project memory: `$CONTEXTKIT_MEMORY_DIR`", generated)
+        self.assertNotIn("- Project memory: `$CONTEXTKIT_MEMORY_DIR`", generated)
         self.assertIn("## Memory Source: `$CONTEXTKIT_MEMORY_DIR/", generated)
         self.assertNotIn(str(persistent), generated)
 

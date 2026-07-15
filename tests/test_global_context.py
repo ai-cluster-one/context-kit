@@ -98,7 +98,7 @@ class GlobalContextTests(unittest.TestCase):
             resolved_global = self.global_context.resolve()
             resolved_inline = global_inline.resolve()
             resolved_stub = global_stub.resolve()
-            self.assertIn(f"- Global context: `{resolved_global}`", generated)
+            self.assertNotIn(f"- Global context: `{resolved_global}`", generated)
             self.assertIn("`contextkit guide global-context`", generated)
             self.assertIn(f"## Global Source: `{resolved_inline}`", generated)
             self.assertIn("## Source: `context/identity/PROJECT.md`", generated)
@@ -127,6 +127,278 @@ class GlobalContextTests(unittest.TestCase):
         doctor = self.run_cli("doctor", "--json")
         self.assertEqual(doctor.returncode, 0, doctor.stderr)
         self.assertIsNone(json.loads(doctor.stdout)["global_context"])
+
+    def test_global_context_init_is_explicit_convergent_and_valid(self) -> None:
+        destination = self.root / "initialized-global-context"
+        config = self.project / ".contextkit" / "config.toml"
+        original_config = config.read_bytes()
+
+        initialized = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        result = json.loads(initialized.stdout)
+        starter = destination / "GLOBAL-CONTEXT.md"
+        self.assertEqual(result["global_context"], str(destination.resolve()))
+        self.assertEqual(result["created"], [str(destination.resolve()), str(starter.resolve())])
+        self.assertEqual(result["skipped"], [])
+        self.assertEqual(result["guide"], "contextkit guide global-context")
+        self.assertEqual(config.read_bytes(), original_config)
+        first_body = starter.read_bytes()
+        self.assertIn(b"load: stub", first_body)
+        self.assertNotIn(str(destination).encode(), first_body)
+
+        audit = self.run_cli("audit-file", str(starter), "--json")
+        self.assertEqual(audit.returncode, 0, audit.stderr)
+        self.assertEqual(json.loads(audit.stdout)["findings"], [])
+
+        rerun = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(rerun.returncode, 0, rerun.stderr)
+        rerun_result = json.loads(rerun.stdout)
+        self.assertEqual(rerun_result["created"], [])
+        self.assertEqual(rerun_result["skipped"], [str(destination.resolve()), str(starter.resolve())])
+        self.assertEqual(starter.read_bytes(), first_body)
+        self.assertEqual(config.read_bytes(), original_config)
+
+    def test_global_context_init_preserves_existing_starter_and_project_templates_exclude_it(self) -> None:
+        destination = self.root / "existing-global-context"
+        destination.mkdir()
+        starter = destination / "GLOBAL-CONTEXT.md"
+        existing = b"personal global context\n"
+        starter.write_bytes(existing)
+
+        initialized = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        result = json.loads(initialized.stdout)
+        self.assertEqual(result["created"], [])
+        self.assertEqual(result["skipped"], [str(destination.resolve()), str(starter.resolve())])
+        self.assertEqual(starter.read_bytes(), existing)
+
+        project = self.root / "template-project"
+        project.mkdir()
+        template_init = subprocess.run(
+            [str(CONTEXTKIT), "init", "--with-template", "--json"],
+            cwd=project,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(template_init.returncode, 0, template_init.stderr)
+        self.assertFalse((project / "global-context" / "GLOBAL-CONTEXT.md").exists())
+
+    def test_global_context_init_rejects_active_project_root_without_mutation(self) -> None:
+        config = self.project / ".contextkit" / "config.toml"
+        body = self.project / "context" / "preserve.txt"
+        body.write_bytes(b"preserve project body\n")
+        original_config = config.read_bytes()
+        original_body = body.read_bytes()
+
+        initialized = self.run_cli("global-context", "init", ".", "--json")
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("overlaps the active ContextKit project", initialized.stderr)
+        self.assertFalse((self.project / "GLOBAL-CONTEXT.md").exists())
+        self.assertEqual(config.read_bytes(), original_config)
+        self.assertEqual(body.read_bytes(), original_body)
+
+    def test_global_context_init_rejects_destination_inside_active_project_without_mutation(self) -> None:
+        destination = self.project / "shared-context"
+        config = self.project / ".contextkit" / "config.toml"
+        original_config = config.read_bytes()
+
+        initialized = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("overlaps the active ContextKit project", initialized.stderr)
+        self.assertFalse(destination.exists())
+        self.assertEqual(config.read_bytes(), original_config)
+
+    def test_global_context_init_rejects_destination_containing_active_project_without_mutation(self) -> None:
+        destination = self.root
+        config = self.project / ".contextkit" / "config.toml"
+        original_config = config.read_bytes()
+
+        initialized = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("overlaps the active ContextKit project", initialized.stderr)
+        self.assertFalse((destination / "GLOBAL-CONTEXT.md").exists())
+        self.assertEqual(config.read_bytes(), original_config)
+
+    def test_global_context_init_rejects_destination_inside_another_managed_project(self) -> None:
+        managed = self.root / "other-project"
+        managed.mkdir()
+        initialized_project = subprocess.run(
+            [str(CONTEXTKIT), "init", "--json"],
+            cwd=managed,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized_project.returncode, 0, initialized_project.stderr)
+        config = managed / ".contextkit" / "config.toml"
+        original_config = config.read_bytes()
+        destination = managed / "shared-context"
+        standalone = self.root / "standalone"
+        standalone.mkdir()
+
+        initialized = subprocess.run(
+            [str(CONTEXTKIT), "global-context", "init", str(destination), "--json"],
+            cwd=standalone,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("inside a ContextKit-managed project", initialized.stderr)
+        self.assertFalse(destination.exists())
+        self.assertEqual(config.read_bytes(), original_config)
+
+    def test_global_context_init_allows_standalone_destination(self) -> None:
+        standalone = self.root / "standalone-project"
+        standalone.mkdir()
+        destination = self.root / "standalone-global-context"
+
+        initialized = subprocess.run(
+            [str(CONTEXTKIT), "global-context", "init", str(destination), "--json"],
+            cwd=standalone,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        result = json.loads(initialized.stdout)
+        self.assertEqual(result["global_context"], str(destination.resolve()))
+        self.assertTrue((destination / "GLOBAL-CONTEXT.md").is_file())
+
+    def test_global_context_init_allows_existing_ordinary_repository(self) -> None:
+        destination = self.root / "ordinary-repository"
+        destination.mkdir()
+        (destination / ".git").mkdir()
+        marker = destination / "README.md"
+        marker.write_bytes(b"ordinary repository\n")
+        standalone = self.root / "standalone-ordinary-check"
+        standalone.mkdir()
+
+        initialized = subprocess.run(
+            [str(CONTEXTKIT), "global-context", "init", str(destination), "--json"],
+            cwd=standalone,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+        self.assertEqual(marker.read_bytes(), b"ordinary repository\n")
+        self.assertTrue((destination / "GLOBAL-CONTEXT.md").is_file())
+
+    def test_global_context_init_rejects_existing_parent_containing_managed_project_without_mutation(self) -> None:
+        destination = self.root / "shared-parent"
+        managed = destination / "neighbor-project"
+        managed.mkdir(parents=True)
+        initialized_project = subprocess.run(
+            [str(CONTEXTKIT), "init", "--with-layers", "--json"],
+            cwd=managed,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized_project.returncode, 0, initialized_project.stderr)
+        config = managed / ".contextkit" / "config.toml"
+        body = managed / "context" / "preserve.txt"
+        body.write_bytes(b"preserve nested project body\n")
+        original_config = config.read_bytes()
+        original_body = body.read_bytes()
+        standalone = self.root / "standalone-parent-check"
+        standalone.mkdir()
+
+        initialized = subprocess.run(
+            [str(CONTEXTKIT), "global-context", "init", str(destination), "--json"],
+            cwd=standalone,
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("contains a ContextKit-managed project", initialized.stderr)
+        self.assertFalse((destination / "GLOBAL-CONTEXT.md").exists())
+        self.assertEqual(config.read_bytes(), original_config)
+        self.assertEqual(body.read_bytes(), original_body)
+
+    def test_global_context_init_rejects_directory_starter_without_mutation(self) -> None:
+        destination = self.root / "directory-starter-collision"
+        starter = destination / "GLOBAL-CONTEXT.md"
+        starter.mkdir(parents=True)
+        marker = starter / "preserve.txt"
+        marker.write_bytes(b"preserve directory contents\n")
+        before = marker.read_bytes()
+
+        initialized = self.run_cli("global-context", "init", str(destination), "--json")
+        self.assertEqual(initialized.returncode, 6)
+        self.assertIn("must be a regular file", initialized.stderr)
+        self.assertTrue(starter.is_dir())
+        self.assertEqual(marker.read_bytes(), before)
+        self.assertEqual(list(destination.iterdir()), [starter])
+
+    def test_global_context_init_rejects_symlink_starters_without_mutation(self) -> None:
+        target = self.root / "personal-global-context.md"
+        target.write_bytes(b"preserve symlink target\n")
+        dangling_target = self.root / "missing-global-context.md"
+        destinations = [
+            (self.root / "regular-symlink-collision", target),
+            (self.root / "dangling-symlink-collision", dangling_target),
+        ]
+        try:
+            for destination, link_target in destinations:
+                destination.mkdir()
+                (destination / "GLOBAL-CONTEXT.md").symlink_to(link_target)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlinks are unavailable: {exc}")
+
+        for destination, link_target in destinations:
+            with self.subTest(destination=destination.name):
+                starter = destination / "GLOBAL-CONTEXT.md"
+                original_link = starter.readlink()
+                initialized = self.run_cli("global-context", "init", str(destination), "--json")
+                self.assertEqual(initialized.returncode, 6)
+                self.assertIn("must be a regular file", initialized.stderr)
+                self.assertTrue(starter.is_symlink())
+                self.assertEqual(starter.readlink(), original_link)
+                self.assertEqual(list(destination.iterdir()), [starter])
+
+        self.assertEqual(target.read_bytes(), b"preserve symlink target\n")
+        self.assertFalse(dangling_target.exists())
+
+    def test_global_context_init_rejects_destination_symlinks_without_mutation(self) -> None:
+        target = self.root / "existing-global-context-target"
+        target.mkdir()
+        marker = target / "preserve.txt"
+        marker.write_bytes(b"preserve destination target\n")
+        dangling_target = self.root / "missing-global-context-target"
+        destinations = [
+            (self.root / "existing-destination-link", target),
+            (self.root / "dangling-destination-link", dangling_target),
+        ]
+        try:
+            destinations[0][0].symlink_to(target, target_is_directory=True)
+            destinations[1][0].symlink_to(dangling_target, target_is_directory=True)
+        except (NotImplementedError, OSError) as exc:
+            self.skipTest(f"symlinks are unavailable: {exc}")
+
+        for destination, link_target in destinations:
+            with self.subTest(destination=destination.name):
+                original_link = destination.readlink()
+                initialized = self.run_cli("global-context", "init", str(destination), "--json")
+                self.assertEqual(initialized.returncode, 6)
+                self.assertIn("destination must not be a symlink", initialized.stderr)
+                self.assertTrue(destination.is_symlink())
+                self.assertEqual(destination.readlink(), original_link)
+                self.assertEqual(original_link, link_target)
+
+        self.assertEqual(marker.read_bytes(), b"preserve destination target\n")
+        self.assertEqual(list(target.iterdir()), [marker])
+        self.assertFalse(dangling_target.exists())
 
     def test_missing_global_directory_is_reported(self) -> None:
         missing = self.root / "missing-global-context"
