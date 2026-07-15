@@ -292,12 +292,12 @@ def _remote_base() -> str:
 def _configured_path(value: str | Path, label: str) -> Path:
     raw = Path(value).expanduser()
     lexical = Path(os.path.abspath(str(raw)))
+    if lexical.is_symlink():
+        _die(f"ContextKit update needs review: {label} is a symlink at the managed boundary", 7)
     try:
         resolved = lexical.resolve(strict=False)
     except OSError as exc:
         _die(f"ContextKit update cannot resolve {label}: {exc}", 7)
-    if lexical != resolved:
-        _die(f"ContextKit update needs review: {label} contains a symlink ancestor", 7)
     return resolved
 
 

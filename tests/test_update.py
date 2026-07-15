@@ -459,11 +459,21 @@ class UpdateTests(unittest.TestCase):
         env = self.env()
         env["CONTEXTKIT_HOME"] = str(alias / "installed")
         symlinked = subprocess.run(
+            [str(CONTEXTKIT), "update", "--check", "--json"], cwd=str(REPO_ROOT), env=env,
+            text=True, capture_output=True, timeout=30,
+        )
+        self.assertEqual(symlinked.returncode, 0, symlinked.stderr)
+        self.assertEqual(json.loads(symlinked.stdout)["install_home"], str(actual / "installed"))
+
+        managed_root = self.root / "managed-root-link"
+        managed_root.symlink_to(actual, target_is_directory=True)
+        env["CONTEXTKIT_HOME"] = str(managed_root)
+        boundary_symlink = subprocess.run(
             [str(CONTEXTKIT), "update", "--check"], cwd=str(REPO_ROOT), env=env,
             text=True, capture_output=True, timeout=30,
         )
-        self.assertEqual(symlinked.returncode, 7)
-        self.assertIn("symlink ancestor", symlinked.stderr)
+        self.assertEqual(boundary_symlink.returncode, 7)
+        self.assertIn("symlink at the managed boundary", boundary_symlink.stderr)
 
         self.install_home.mkdir()
         foreign_bundle = self.root / "foreign-bundle"
