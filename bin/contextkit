@@ -16,6 +16,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -479,6 +480,33 @@ def _validate_source_ref(value: Any, owner: str, exit_code: int = 6) -> str:
     return value
 
 
+def _retry_fetch(url: str, timeout: int, max_bytes: int | None = None) -> bytes:
+    """Fetch URL with bounded retry and exponential backoff for transient failures."""
+    max_attempts = 3
+    base_delay = 0.5
+    last_exc = None
+
+    for attempt in range(max_attempts):
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as response:
+                if max_bytes is not None:
+                    return response.read(max_bytes + 1)
+                return response.read()
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
+            last_exc = exc
+            is_transient = (
+                isinstance(exc, (urllib.error.URLError, http.client.HTTPException, OSError))
+                and not isinstance(exc, urllib.error.HTTPError)
+            )
+            if is_transient and attempt < max_attempts - 1:
+                delay = base_delay * (2 ** attempt)
+                time.sleep(delay)
+                continue
+            break
+
+    raise last_exc  # type: ignore[misc]
+
+
 def _release_url(source: UpdateSource, rel: str = RELEASE_MANIFEST) -> str:
     quoted = "/".join(urllib.parse.quote(part) for part in rel.split("/"))
     quoted_ref = "/".join(urllib.parse.quote(part) for part in source.ref.split("/"))
@@ -488,8 +516,7 @@ def _release_url(source: UpdateSource, rel: str = RELEASE_MANIFEST) -> str:
 def _fetch_update_bytes(source: UpdateSource, rel: str) -> bytes:
     url = _release_url(source, rel)
     try:
-        with urllib.request.urlopen(url, timeout=30) as response:
-            content = response.read(MAX_UPDATE_FILE_BYTES + 1)
+        content = _retry_fetch(url, timeout=30, max_bytes=MAX_UPDATE_FILE_BYTES)
     except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException) as exc:
         _die(f"ContextKit update fetch failed: {url}\n{exc}", 5)
     if len(content) > MAX_UPDATE_FILE_BYTES:
@@ -921,8 +948,8 @@ def cmd_update(args: argparse.Namespace) -> None:
 def _fetch_bundle(rel: Path) -> str | None:
     url = f"{_remote_base()}/{_remote_ref()}/{BUNDLE_REL.as_posix()}/{rel.as_posix()}"
     try:
-        with urllib.request.urlopen(url, timeout=8) as response:
-            return response.read().decode("utf-8")
+        content = _retry_fetch(url, timeout=8)
+        return content.decode("utf-8")
     except (OSError, ValueError, UnicodeError, urllib.error.URLError, http.client.HTTPException):
         return None
 
@@ -930,8 +957,8 @@ def _fetch_bundle(rel: Path) -> str | None:
 def _fetch_guide(rel: Path) -> str | None:
     url = f"{_remote_base()}/{_remote_ref()}/{GUIDES_REL.as_posix()}/{rel.as_posix()}"
     try:
-        with urllib.request.urlopen(url, timeout=8) as response:
-            return response.read().decode("utf-8")
+        content = _retry_fetch(url, timeout=8)
+        return content.decode("utf-8")
     except (OSError, ValueError, UnicodeError, urllib.error.URLError, http.client.HTTPException):
         return None
 

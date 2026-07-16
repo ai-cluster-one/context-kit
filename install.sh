@@ -150,7 +150,23 @@ fi
 
 tmp="$(mktemp)"
 trap 'rm -f "$tmp"' EXIT
-curl -fsSL "$REPO/bin/contextkit" -o "$tmp" || err "fetch failed: $REPO/bin/contextkit"
+
+max_attempts=3
+attempt=0
+while [ "$attempt" -lt "$max_attempts" ]; do
+    attempt=$((attempt + 1))
+    if curl -fsSL "$REPO/bin/contextkit" -o "$tmp"; then
+        break
+    fi
+    if [ "$attempt" -lt "$max_attempts" ]; then
+        case "$attempt" in
+            1) sleep 0.5 ;;
+            2) sleep 1 ;;
+        esac
+    else
+        err "fetch failed after $max_attempts attempts: $REPO/bin/contextkit"
+    fi
+done
 
 if [ -n "$SHA256" ]; then
     actual="$( (shasum -a 256 "$tmp" 2>/dev/null || sha256sum "$tmp") | cut -d' ' -f1 )"

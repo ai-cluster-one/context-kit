@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest import mock
 
@@ -647,6 +648,67 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads((self.install_home / "release.json").read_text()), manifest)
         self.assertEqual((self.bin_dir / "contextkit").resolve(), (self.install_home / ".manager" / "contextkit").resolve())
+
+    def test_retry_succeeds_after_transient_failures(self) -> None:
+        module = load_contextkit_module()
+        self.write_release()
+        source = module.UpdateSource(self.remote.as_uri(), self.ref, "environment", "environment")
+
+        attempt_count = 0
+        original_urlopen = module.urllib.request.urlopen
+
+        def transient_failure_then_success(*args, **kwargs):
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:
+                raise urllib.error.URLError("Remote end closed connection without response")
+            return original_urlopen(*args, **kwargs)
+
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=transient_failure_then_success):
+            content = module._fetch_update_bytes(source, "release.json")
+
+        self.assertEqual(attempt_count, 3)
+        self.assertIn(b"schema", content)
+        self.assertIn(b"version", content)
+
+    def test_retry_fails_after_max_attempts(self) -> None:
+        module = load_contextkit_module()
+        self.write_release()
+        source = module.UpdateSource(self.remote.as_uri(), self.ref, "environment", "environment")
+
+        attempt_count = 0
+
+        def always_fail(*args, **kwargs):
+            nonlocal attempt_count
+            attempt_count += 1
+            raise urllib.error.URLError("Remote end closed connection without response")
+
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=always_fail):
+            with self.assertRaises(module.ContextKitError) as raised:
+                module._fetch_update_bytes(source, "release.json")
+
+        self.assertEqual(attempt_count, 3)
+        self.assertEqual(raised.exception.exit_code, 5)
+        self.assertIn("fetch failed", str(raised.exception))
+
+    def test_retry_skips_for_http_errors(self) -> None:
+        module = load_contextkit_module()
+        self.write_release()
+        source = module.UpdateSource(self.remote.as_uri(), self.ref, "environment", "environment")
+
+        attempt_count = 0
+
+        def http_404(*args, **kwargs):
+            nonlocal attempt_count
+            attempt_count += 1
+            raise urllib.error.HTTPError("http://test", 404, "Not Found", {}, None)
+
+        with mock.patch.object(module.urllib.request, "urlopen", side_effect=http_404):
+            with self.assertRaises(module.ContextKitError) as raised:
+                module._fetch_update_bytes(source, "release.json")
+
+        self.assertEqual(attempt_count, 1)
+        self.assertEqual(raised.exception.exit_code, 5)
 
 
 class ReleaseManifestTests(unittest.TestCase):
