@@ -504,6 +504,25 @@ class GlobalContextTests(unittest.TestCase):
         }
         self.assertTrue(removed_semantic_codes.isdisjoint(item["code"] for item in findings))
 
+    def test_internal_context_link_routes_to_live_semantic_discovery(self) -> None:
+        linked = self.project / "context" / "guidelines" / "LINKED.md"
+        linked.parent.mkdir()
+        linked.write_text(self.context_file(
+            "Linked Procedure",
+            "Load when work needs a procedure that may have an available owner.",
+            "stub",
+            20,
+            "Use the [transfer routine](../../routines/transfer.md).",
+        ))
+
+        audit = self.run_cli("audit", "--json")
+        self.assertEqual(audit.returncode, 0, audit.stderr)
+        finding = next(item for item in json.loads(audit.stdout)["findings"] if item["code"] == "internal-context-link")
+        self.assertEqual(finding["rule_source"], "contextkit guide authoring")
+        self.assertIn("capability, procedure, or knowledge needed", finding["hint"])
+        self.assertIn("discover an available owner at use time", finding["hint"])
+        self.assertIn("fallback, stop, or escalation path", finding["hint"])
+
 
 if __name__ == "__main__":
     unittest.main()

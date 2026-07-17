@@ -6,17 +6,16 @@ This guide is the operational rule source for ContextKit capability envelopes. I
 
 ## Boundary
 
-ContextKit indexes capability awareness. It does not turn capabilities into ContextKit doctrine.
+ContextKit inserts capability awareness supplied by the capabilities manager. It does not turn capabilities into ContextKit doctrine or compose a parallel capability index.
 
 ContextKit owns:
 
 - discovery of the project envelope layer;
-- the project gate in `capabilities/settings.json`;
-- enabled capability awareness in generated runtime context;
-- installed stubs and guide topic names when available;
+- invocation of `capabilities context --fragment`;
+- unchanged placement of the returned block in generated runtime context;
 - warnings that affect context generation.
 
-Capability tools own their command contracts, readiness, credentials, connections, state homes, schemas, releases, and internal authoring doctrine.
+The capabilities manager owns the project gate, its manager intro, enabled capability enumeration, installed snapshots, and rendering of project identifiers, connections, and references. Individual capability tools own their command contracts, readiness, credentials, state homes, schemas, releases, and internal authoring doctrine.
 
 ## Operating A Capability
 
@@ -43,4 +42,4 @@ Files under `capabilities/<name>/` hold project-side, non-secret references wher
 
 ## Quality Bar
 
-The boundary is healthy when generated context says which capabilities are enabled, detailed use is discovered from the capability, readiness is checked at use time, and ContextKit docs do not copy capability contracts.
+The boundary is healthy when the manager-owned block says which capabilities are enabled, ContextKit inserts it without interpretation, detailed use is discovered from the capability, readiness is checked at use time, and ContextKit docs do not copy capability contracts.

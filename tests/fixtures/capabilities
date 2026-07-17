@@ -1,0 +1,19 @@
+#!/bin/sh
+
+if [ "$1" != "context" ] || [ "$2" != "--fragment" ] || [ "$#" -ne 2 ]; then
+  printf '%s\n' 'fixture expects: context --fragment' >&2
+  exit 64
+fi
+
+printf '%s\n' \
+  '# Capabilities' \
+  '' \
+  '<!-- capabilities:begin — fixture manager-owned block -->' \
+  '' \
+  'Manager-owned capability intro.' \
+  '' \
+  '## provider-only' \
+  '' \
+  'This capability was rendered by the provider fixture.' \
+  '' \
+  '<!-- capabilities:end -->'

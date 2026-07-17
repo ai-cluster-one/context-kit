@@ -15,6 +15,7 @@ Use ContextKit when multiple agents, hosts, or sessions need the same source of 
 - always-on operating runtime loaded from the ContextKit bundle;
 - generated guide menu in runtime context;
 - on-demand guides for authoring, global context, memory, validation, audits, semantic grooming, routines, assets, migration, hooks, and destructive operations;
+- isolated workbench sessions for reviewing a project's agent body without adopting its worker identity;
 - starter files for project onboarding and user-level global context;
 - advisory audits that point to the rule source for each finding;
 - generated runtime context rebuilt from source, never edited by hand.
@@ -139,6 +140,18 @@ ContextKit's shipped runtime block lives under `bundle/`. Guides live under `gui
 Generated runtime context includes the full runtime block and a generated Guide Menu. Guide bodies are loaded on demand with `contextkit guide <topic>`.
 
 ContextKit can compile an optional external global-context source for projects that opt in. Use `contextkit help` to discover setup commands and `contextkit guide global-context` for ownership, authoring, ordering, and validation rules.
+
+## Isolated Workbench
+
+Run a task-scoped Context Steward from inside a managed project when the project body itself is the object of review:
+
+```sh
+contextkit workbench "Review the project context for Direct Address violations"
+```
+
+The command starts Codex in a temporary external project root. That agent receives ContextKit's runtime, Guide Menu, Workbench Guide, and a same-release read-only guide distribution, while the current project is exposed only as an additional workspace under review. The default mode is read-only; request local source edits explicitly with `--write`. The temporary workspace is removed after the invocation unless it is kept for inspection.
+
+The v1 adapter is Codex-only. Claude support is deferred because its additional-directory loading can include target-owned skills and instructions, which breaks the required isolation boundary. Use `contextkit help` for stdin, timeout, machine-readable output, and the current sandbox contract. Use `contextkit guide workbench` for the stewardship workflow and boundaries.
 
 ## Context Files
 
@@ -267,6 +280,12 @@ Open the agent-driven semantic grooming workflow:
 contextkit groom
 ```
 
+Run an isolated stewardship task against the current project:
+
+```sh
+contextkit workbench "Audit the context body against ContextKit doctrine"
+```
+
 Write an audit report under `.contextkit/audits/`:
 
 ```sh
@@ -338,7 +357,7 @@ Default static project source folders are `context/`, `assets/`, `routines/`, an
 
 Capabilities are separate tool packages managed by the [capabilities project](https://github.com/ai-cluster-one/capabilities).
 
-When a repository has a `capabilities/` project envelope, ContextKit reads the enabled tool set and includes tool awareness in generated runtime context. Capability implementation, release, credentials, connections, and capability audit live in the capabilities project and in capability-owned guides.
+When a repository has a `capabilities/` project envelope, ContextKit asks the capabilities manager for `capabilities context --fragment` and inserts the returned Markdown block unchanged into generated runtime context. The capabilities manager owns its intro, enabled-tool enumeration, snapshots, identifiers, connections, references, and guides; ContextKit owns only placement in the combined host context.
 
 ## v0 Scope
 
@@ -351,7 +370,7 @@ The current implementation covers the local, repo-backed agent body:
 - lazy provider-neutral project memory with capture, full-block rendering, search, status, import, and recursive inline compilation;
 - thin hook installation;
 - routine index inclusion from `routines/**/*.md` front matter;
-- capability index inclusion from `capabilities/settings.json`, installed capability snapshots, and visible project envelopes;
+- opaque capability-context inclusion from the capabilities manager's `capabilities context --fragment` provider surface;
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`;
 - agent-driven semantic grooming without persistent groom state;
 - generated guide menu and on-demand guides loaded from ContextKit source/install;

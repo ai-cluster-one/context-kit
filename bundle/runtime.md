@@ -32,7 +32,7 @@ Use `contextkit memory add` to preserve a new conclusion that future sessions mu
 
 `routines/` is repeatable procedure. Use `contextkit guide routines`.
 
-`capabilities/` is the project envelope for enabled tools. ContextKit indexes awareness; capability internals remain tool-owned. Use `contextkit guide capabilities` and the tool's own help or doctor surface.
+`capabilities/` is the project envelope for enabled tools. ContextKit inserts the capabilities manager's context block unchanged; capability awareness and internals remain tool-owned. Use `contextkit guide capabilities` and the tool's own help or doctor surface.
 
 ## Discovery
 

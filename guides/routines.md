@@ -47,7 +47,7 @@ A processor routine works one item. It states item shape, idempotency check, rec
 
 ## Relationship To Owners
 
-Routines apply models; they do not own models. If a routine needs a state model, load the context owner. If it needs a tool, use the tool's help, doctor, or guide surface.
+Routines apply models; they do not own models. Describe a dependency by the model, capability, or outcome the step needs, then discover its available owner at use time. Do not hardcode a sibling project-body path, assume that a particular optional routine or capability is present, or restate the owner's contract. If discovery finds no owner, follow the routine's declared stop, fallback, or escalation path. Use an available tool's live help, doctor, or guide surface for its current contract.
 
 ## Validation
 

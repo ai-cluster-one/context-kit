@@ -1,21 +1,22 @@
 {
   "files": {
-    "bin/contextkit": "7a5388cf1b4b620122d721e0131f5bface9985650096ad148526ca2b36425da7",
-    "bundle/runtime.md": "bb935c7c0a6f4ded22e122dd8e4b119465e113e03e103ae5c5d7b25479d5a4e2",
+    "bin/contextkit": "85321c37340a95570bbcd62e83513405e666d1cbba44e558f15127e51394e136",
+    "bundle/runtime.md": "e0feb703a13ad16b9a05b05f714cee7b543cd2f9afdde6f5744d34fefdcac12a",
     "guides/agent-team.md": "0c44546f297afbb0a4bfd2b66c18300c2a0ccfdbcb01b579f1cd67cad442ff21",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
-    "guides/authoring.md": "968f8033b7a732c18199425cc2bdfd751c1a2c71d83a18db38201c62a9de2c47",
+    "guides/authoring.md": "49873c42370a15913b8c50ff8258074c9f1f152e4eaa60abe9dc4a4714b69209",
     "guides/bootstrap.md": "1a73cba6c8245f95ea6e0451bc22c9703e54ac6baa24f65dc83533d523cba0f8",
-    "guides/capabilities.md": "b7d3de60125dd0124da3aee686cc5f398b9c4998e1aa04ce769c496d63aaef3f",
+    "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
     "guides/groom.md": "f5e2141d275d74628b7c15727518d7cf07e4cd8418cfedcb0896481a550f4478",
     "guides/hooks.md": "e85a01538645593b8a97827bc8dee08a6dd64daae3f2f7ef05e2ca4ced84d826",
     "guides/memory.md": "814aba72a7f09bcc744d553acd3a62895a60d1cbce67ca85db19f3dc7ead1f15",
     "guides/migration.md": "9e4c99fb7af933ff9cfa49a67ca7dab0f2ccc346c878e8d317d686356dde814a",
-    "guides/routines.md": "9439912d5e22343dc7c0d6172670b5e7ad22dfd770af45000dabe21281c0e014",
+    "guides/routines.md": "7f331ca8ea2432293ed1a0e9e11f89d4efacd105715f6f0e88e5bdf58515e1f4",
     "guides/validation.md": "74508d01ba952d81cba025a6d626e857f6b73980bac9a491442e826a63eda4b8",
+    "guides/workbench.md": "619ed06120dfb10ab4a322fc8e92ca9835a7a55b80f87225e9183ea24265f13d",
     "templates/README.md": "f0dd6181e5c2419a50b82ad1ac0f230f7ab1e44e1ab97b92b04d6f92649044ad",
     "templates/context/architecture/RUNTIME.md": "dc3f6e7a032f484a245710bd1f35aebf689fdc78fc5fb7a2fa3db1506a515416",
     "templates/context/architecture/SERVICES.md": "a3b1aa08fd30b1660db34d0a5af9a83dba60d822bf0497bbe4bdfcb26f3db49d",
@@ -29,5 +30,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.1.3"
+  "version": "0.1.4"
 }

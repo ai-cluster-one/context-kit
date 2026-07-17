@@ -61,7 +61,7 @@ Keep:
 - durable facts stated affirmatively;
 - one fact in one home;
 - reader-appropriate voice;
-- routing to neighboring owners only when necessary.
+- semantic routing to neighboring owners by the capability, procedure, or knowledge needed.
 
 Exclude:
 
@@ -71,6 +71,14 @@ Exclude:
 - asset paths used as live doctrine;
 - secrets or local machine values.
 
+## Semantic Routing
+
+Keep authored project-body files independent of sibling paths. Do not link to another project-body file or restate its contents to make the current file work. Express the capability, procedure, or knowledge the agent needs in domain terms and let compiled descriptions and live discovery identify an available owner at use time.
+
+Do not name a particular routine, capability, or file merely because it exists while authoring. A routine can be removed and a capability can be disabled. When work requires an optional owner, tell the agent how to discover an available owner and define the fallback, stop condition, or escalation path when discovery finds none. Do not infer that a missing owner exists or invent its behavior.
+
+Name a guide, tool, or configuration anchor when that named surface is itself the durable owner or discovery mechanism. Use the owner's live help, doctor, guide, or index instead of copying its contract into project-body prose.
+
 ## Authoring Procedure
 
 1. State the fact or procedure in one sentence.
@@ -78,8 +86,9 @@ Exclude:
 3. Choose the layer: project `context/`, configured global context, `assets/`, `routines/`, `capabilities/`, or `.contextkit/`.
 4. Load the guide that owns that layer.
 5. Write only what the selected file owns.
-6. Remove or rewrite duplicates instead of adding a parallel truth.
-7. Run validation.
+6. Express dependencies semantically and define the no-owner path.
+7. Remove or rewrite duplicates instead of adding a parallel truth.
+8. Run validation.
 
 ```sh
 contextkit doctor
