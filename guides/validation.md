@@ -14,7 +14,7 @@ contextkit build --target all
 contextkit audit
 ```
 
-`doctor` checks shape, binding, local/generated guards, visible layers, capability gate, legacy dot layers, configured targets, and an optional global context source.
+`doctor` checks shape, binding, local/generated guards, visible layers, legacy dot layers, configured targets, and an optional global context source. It reports where the capability envelope resolves but never judges its contents: ContextKit owns the envelope's location, the capabilities manager owns everything inside it and proves that through its own doctor.
 
 `build` proves project context, project memory when present, and configured global context can compile into host runtime context. Generated files are build artifacts; do not fix them by hand.
 

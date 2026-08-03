@@ -41,11 +41,12 @@ DEFAULT_SOURCES = {
     "capabilities": "capabilities",
 }
 BODY_ROOT_DEFAULT = Path(".")
-# Layers the configured body root applies to. `capabilities` is excluded because
-# the capabilities manager is the sole writer of that envelope and resolves it
-# from the project root itself. Move it only with `sources.capabilities`, and
-# only when the manager resolves the same location.
-ROOTED_SOURCES = ("context", "assets", "routines", "memory")
+# Layers the configured body root applies to. The capabilities manager asks
+# ContextKit where the envelope belongs, so the envelope follows the body root
+# like every other layer. The legacy `.capabilities` bridge is the exception:
+# it names a fixed project-root location, so it is never rooted.
+ROOTED_SOURCES = ("context", "assets", "routines", "memory", "capabilities")
+LEGACY_CAPABILITIES_REL = ".capabilities"
 # Layers that are created on demand rather than scaffolded, and whose absence is
 # healthy. Memory appears at the first capture or import.
 LAZY_SOURCES = ("memory",)
@@ -1163,7 +1164,7 @@ def _config(root: Path) -> dict[str, Any]:
         if not isinstance(rel, str) or not rel.strip():
             _die(f"invalid source path for {name}: expected a non-empty string", 6)
         rel_path = Path(rel)
-        allowed_dot_capabilities = name == "capabilities" and rel_path.as_posix() == ".capabilities"
+        allowed_dot_capabilities = name == "capabilities" and rel_path.as_posix() == LEGACY_CAPABILITIES_REL
         if rel_path.is_absolute() or ".." in rel_path.parts or not rel_path.parts:
             _die(
                 f"invalid source path for {name}: {rel}\n"
@@ -1180,12 +1181,13 @@ def _config(root: Path) -> dict[str, Any]:
             )
 
     # `body.root` locates the body; `sources.<layer>` names the layer inside it.
-    # `capabilities` is not rooted: the capabilities manager writes that envelope
-    # and resolves it from the project root.
-    sources = {
-        name: (body_root / rel).as_posix() if name in ROOTED_SOURCES else Path(rel).as_posix()
-        for name, rel in declared.items()
-    }
+    # The legacy `.capabilities` bridge names a fixed project-root location.
+    def _resolve(name: str, rel: str) -> str:
+        if name not in ROOTED_SOURCES or rel == LEGACY_CAPABILITIES_REL:
+            return Path(rel).as_posix()
+        return (body_root / rel).as_posix()
+
+    sources = {name: _resolve(name, rel) for name, rel in declared.items()}
 
     global_context: Path | None = None
     if global_context_raw is not None:
@@ -1223,13 +1225,10 @@ def _configured_capabilities_dir(root: Path) -> Path:
 
 
 def _required_gitignore_lines(capabilities_dir: Path | None = None) -> list[str]:
-    cap_dir = capabilities_dir or Path(DEFAULT_SOURCES["capabilities"])
-    cap_state_guard = cap_dir / "*" / "state"
-    return [
-        *REQUIRED_GITIGNORE_BASE_LINES[:5],
-        cap_state_guard.as_posix() + "/",
-        *REQUIRED_GITIGNORE_BASE_LINES[5:],
-    ]
+    # The capability state guard is not listed here. The capabilities manager
+    # writes `*/state/` into its own envelope `.gitignore` before any capability
+    # can produce state, so restating the rule here would give it two homes.
+    return list(REQUIRED_GITIGNORE_BASE_LINES)
 
 
 def _legacy_dot_layers(root: Path, sources: dict[str, str] | None = None) -> list[str]:
@@ -1452,12 +1451,6 @@ def _capabilities_manager() -> str | None:
 def _capability_context(root: Path, capabilities_dir: Path, warnings: list[str]) -> str:
     if not (root / capabilities_dir).is_dir():
         warnings.append(f"capability layer not present; add `{capabilities_dir.as_posix()}/` or run `contextkit guide capabilities`")
-        return ""
-    if capabilities_dir.as_posix() not in {"capabilities", ".capabilities"}:
-        warnings.append(
-            f"capability context omitted: `{capabilities_dir.as_posix()}/` is not a "
-            "capabilities-manager project envelope; use `capabilities/`"
-        )
         return ""
     manager = _capabilities_manager()
     if not manager:
@@ -2099,8 +2092,9 @@ def _ensure_project_layers(root: Path, sources: dict[str, str], created: list[st
         else:
             path.mkdir(parents=True, exist_ok=True)
             created.append(str(path))
-    gate = _capabilities_dir_from_sources(sources) / "settings.json"
-    _write_if_missing(root / gate, '{\n  "capabilities": {}\n}\n', created, skipped)
+    # The envelope directory is a body layer, so ContextKit places it. Everything
+    # inside it — the gate, the state guard, the generated skill — belongs to the
+    # capabilities manager, which is its sole writer. Use `capabilities init`.
 
 
 def _init_project(root: Path, with_layers: bool = False, with_template: bool = False,
@@ -2931,16 +2925,14 @@ def _gitignore_patterns(root: Path) -> set[str]:
 
 
 def _required_project_files(root: Path, sources: dict[str, str]) -> dict[str, dict[str, Any]]:
-    capability_gate = _capabilities_dir_from_sources(sources) / "settings.json"
+    # The capability gate is not listed here. ContextKit resolves where the
+    # envelope lives; the capabilities manager owns its contents and proves its
+    # own readiness through `capabilities doctor`.
     return {
         ".contextkit/config.toml": {"path": str(root / CONFIG_REL), "present": (root / CONFIG_REL).exists()},
         ".contextkit/README.md": {"path": str(root / README_REL), "present": (root / README_REL).exists()},
         ".gitignore": {"path": str(root / ".gitignore"), "present": (root / ".gitignore").exists()},
         ".env.local": {"path": str(root / ".env.local"), "present": (root / ".env.local").exists()},
-        capability_gate.as_posix(): {
-            "path": str(root / capability_gate),
-            "present": (root / capability_gate).exists(),
-        },
     }
 
 
@@ -3559,20 +3551,14 @@ def _bootstrap_steps(root: Path, sources: dict[str, str]) -> list[MigrationStep]
 
     capabilities_dir = _capabilities_dir_from_sources(sources)
     settings_rel = capabilities_dir / "settings.json"
-    settings = root / settings_rel
-    legacy_settings = root / ".capabilities" / "settings.json"
-    if settings.exists():
-        steps.append(MigrationStep(settings_rel.as_posix(), "keep", "ok", "Capability gate already exists."))
-    elif capabilities_dir.as_posix() != ".capabilities" and legacy_settings.exists():
+    if not (root / settings_rel).exists():
         steps.append(MigrationStep(
             settings_rel.as_posix(),
-            "move",
-            "ready",
-            "Capability gate exists under `.capabilities/` and will move with the visible layer migration.",
-            "git mv .capabilities capabilities",
+            "delegate",
+            "manual",
+            "The capability gate belongs to the capabilities manager, which resolves this envelope from ContextKit.",
+            "capabilities init",
         ))
-    else:
-        steps.append(MigrationStep(settings_rel.as_posix(), "create", "ready", "Missing capability gate file.", "contextkit adopt --with-layers"))
 
     patterns = _gitignore_patterns(root)
     missing = [line for line in _required_gitignore_lines(capabilities_dir) if line not in patterns]

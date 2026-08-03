@@ -71,16 +71,31 @@ class BodyRootTests(unittest.TestCase):
             starters = list((project / "agent" / "context").rglob("*.md"))
             self.assertTrue(starters, "starter templates should land under the body root")
 
-    def test_capabilities_envelope_stays_at_the_project_root(self) -> None:
+    def test_capabilities_envelope_follows_the_body_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = self.project(temp)
             self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
 
-            self.assertTrue((project / "capabilities" / "settings.json").is_file())
-            self.assertFalse((project / "agent" / "capabilities").exists())
+            self.assertTrue((project / "agent" / "capabilities").is_dir())
+            self.assertFalse((project / "capabilities").exists())
             report = self.doctor_json(project)
             resolved = Path(report["layers"]["capabilities"]["path"]).resolve()
-            self.assertEqual(resolved, (project / "capabilities").resolve())
+            self.assertEqual(resolved, (project / "agent" / "capabilities").resolve())
+
+    def test_contextkit_places_the_envelope_but_does_not_fill_it(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            project = self.project(temp)
+            self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
+
+            envelope = project / "agent" / "capabilities"
+            self.assertTrue(envelope.is_dir(), "ContextKit places the envelope directory")
+            self.assertEqual(list(envelope.iterdir()), [], "the manager owns everything inside it")
+
+            report = self.doctor_json(project)
+            self.assertTrue(report["ok"], report["problems"])
+            self.assertNotIn("settings.json", json.dumps(report["required_files"]))
+            self.assertEqual([g for g in report["gitignore_guards"] if "state" in g], [])
+
 
     def test_memory_resolves_under_the_body_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
@@ -169,9 +184,9 @@ class BodyRootTests(unittest.TestCase):
             self.assertEqual(layers["context"], "agent/context")
             self.assertEqual(layers["assets"], "agent/assets")
             self.assertEqual(layers["routines"], "agent/playbooks")
-            self.assertEqual(layers["capabilities"], "capabilities")
+            self.assertEqual(layers["capabilities"], "agent/capabilities")
 
-    def test_legacy_dot_capabilities_source_survives_a_body_root(self) -> None:
+    def test_legacy_dot_capabilities_is_never_rooted(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = self.project(temp)
             self.write_config(
@@ -182,6 +197,9 @@ class BodyRootTests(unittest.TestCase):
             layers = {name: Path(item["path"]).relative_to(project).as_posix()
                       for name, item in report["layers"].items()}
             self.assertEqual(layers["capabilities"], ".capabilities")
+
+            resolved = self.run_cli("path", "capabilities", cwd=project)
+            self.assertEqual(Path(resolved.stdout.strip()), project / ".capabilities")
 
     def test_hidden_and_escaping_source_paths_are_rejected(self) -> None:
         cases = {
