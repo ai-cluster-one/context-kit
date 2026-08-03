@@ -10,7 +10,9 @@ Project memory is the project's hot staging layer. Keep project-relevant knowled
 
 Memory is provisional. It is not live doctrine, historical evidence, a task queue, a transcript archive, or provider-owned storage.
 
-The memory directory is optional and created lazily by memory capture or import. It defaults to visible `memory/`. Set `CONTEXTKIT_MEMORY_DIR` to a dedicated persistent directory when deployment may replace the project filesystem. The deployment environment must mount that directory durably.
+The memory directory is optional and created lazily by memory capture or import. Its absence is healthy and is not a doctor problem.
+
+Memory is an ordinary body layer: it defaults to visible `memory/`, `sources.memory` names it, and `body.root` locates it, exactly like `context/`, `assets/`, and `routines/`. Set `CONTEXTKIT_MEMORY_DIR` to a dedicated directory when deployment may replace the project filesystem; that anchor outranks the configured source and may point outside the project. The deployment environment must mount that directory durably. `contextkit memory status` reports the active source, and `contextkit path memory` resolves the configured one.
 
 Use `contextkit memory status` to verify the active source before relying on external persistence. Do not point the anchor at a project root, shared doctrine tree, or directory whose unrelated Markdown should enter runtime context.
 

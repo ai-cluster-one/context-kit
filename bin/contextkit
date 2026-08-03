@@ -37,18 +37,28 @@ DEFAULT_SOURCES = {
     "context": "context",
     "assets": "assets",
     "routines": "routines",
+    "memory": "memory",
     "capabilities": "capabilities",
 }
+BODY_ROOT_DEFAULT = Path(".")
+# Layers the configured body root applies to. `capabilities` is excluded because
+# the capabilities manager is the sole writer of that envelope and resolves it
+# from the project root itself. Move it only with `sources.capabilities`, and
+# only when the manager resolves the same location.
+ROOTED_SOURCES = ("context", "assets", "routines", "memory")
+# Layers that are created on demand rather than scaffolded, and whose absence is
+# healthy. Memory appears at the first capture or import.
+LAZY_SOURCES = ("memory",)
 DEFAULT_TARGETS = {
     "codex": Path(".codex") / "generated" / "context.md",
     "claude": Path(".claude") / "rules" / "CONTEXT.md",
 }
 CAPABILITIES_MANAGER_ENV = "CAPABILITIES_MANAGER"
+CAPABILITIES_ENVELOPE_ENV = "CAPABILITIES_PROJECT_ENVELOPE"
 BUNDLE_REL = Path("bundle")
 GUIDES_REL = Path("guides")
 TEMPLATES_REL = Path("templates")
 GLOBAL_CONTEXT_TEMPLATE_REL = Path("global-context") / "GLOBAL-CONTEXT.md"
-MEMORY_REL = Path("memory")
 MEMORY_DIR_ENV = "CONTEXTKIT_MEMORY_DIR"
 LEGACY_DOCTRINE_REL = Path("doctrine")
 GUIDE_TOPICS = [
@@ -1114,25 +1124,68 @@ def _resolve_global_context_path(root: Path, value: str) -> Path:
     return resolved
 
 
+def _parse_body_root(raw: dict[str, Any]) -> Path:
+    section = raw.get("body") if isinstance(raw.get("body"), dict) else {}
+    value = section.get("root", ".")
+    if not isinstance(value, str) or not value.strip():
+        _die(
+            "invalid body.root: expected a non-empty path string\n"
+            'Use `root = "."` for a project-root body or `root = "agent"` to collapse the body into one folder.',
+            6,
+        )
+    candidate = Path(value.strip())
+    if candidate.as_posix() in {".", "./"}:
+        return BODY_ROOT_DEFAULT
+    if candidate.is_absolute() or ".." in candidate.parts:
+        _die(
+            f"invalid body.root: {value}\n"
+            "The body root must be a relative path inside the project.",
+            6,
+        )
+    if candidate.parts[0].startswith("."):
+        _die(
+            f"invalid body.root: {value}\n"
+            "The ContextKit project body is visible. Choose a non-hidden folder such as `agent`.\n"
+            "Use `contextkit guide authoring` for the project-body contract.",
+            6,
+        )
+    return candidate
+
+
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
     raw_sources = dict((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
     global_context_raw = raw_sources.pop("global_context", None)
-    sources = dict(DEFAULT_SOURCES)
-    sources.update(raw_sources)
-    for name, rel in sources.items():
+    body_root = _parse_body_root(raw)
+    declared = dict(DEFAULT_SOURCES)
+    declared.update(raw_sources)
+    for name, rel in declared.items():
         if not isinstance(rel, str) or not rel.strip():
             _die(f"invalid source path for {name}: expected a non-empty string", 6)
         rel_path = Path(rel)
         allowed_dot_capabilities = name == "capabilities" and rel_path.as_posix() == ".capabilities"
+        if rel_path.is_absolute() or ".." in rel_path.parts or not rel_path.parts:
+            _die(
+                f"invalid source path for {name}: {rel}\n"
+                "A source path must name a directory strictly inside the project, not the project root itself.",
+                6,
+            )
         if rel_path.parts and rel_path.parts[0].startswith(".") and not allowed_dot_capabilities:
             _die(
                 f"invalid source path for {name}: {rel}\n"
-                "ContextKit project-body folders are visible: context/, assets/, routines/, capabilities/.\n"
+                "ContextKit project-body folders are visible. Use `body.root` to collapse them into one visible folder.\n"
                 "Only `sources.capabilities = \".capabilities\"` is allowed as a legacy compatibility override.\n"
                 "Use `contextkit migrate --plan` for legacy dot-folder projects.",
                 6,
             )
+
+    # `body.root` locates the body; `sources.<layer>` names the layer inside it.
+    # `capabilities` is not rooted: the capabilities manager writes that envelope
+    # and resolves it from the project root.
+    sources = {
+        name: (body_root / rel).as_posix() if name in ROOTED_SOURCES else Path(rel).as_posix()
+        for name, rel in declared.items()
+    }
 
     global_context: Path | None = None
     if global_context_raw is not None:
@@ -1149,6 +1202,7 @@ def _config(root: Path) -> dict[str, Any]:
     return {
         "version": raw.get("version", VERSION),
         "type": raw.get("type", "agent-project"),
+        "body_root": body_root,
         "sources": sources,
         "global_context": global_context,
         "global_context_raw": global_context_raw,
@@ -1416,7 +1470,13 @@ def _capability_context(root: Path, capabilities_dir: Path, warnings: list[str])
         proc = _run(
             [manager, "context", "--fragment"],
             root,
-            env={"CLAUDE_PROJECT_DIR": str(root)},
+            # Hand the resolved envelope over up front. The manager asks ContextKit
+            # where the envelope lives; receiving the answer here keeps it from
+            # calling back into ContextKit during ContextKit's own build.
+            env={
+                "CLAUDE_PROJECT_DIR": str(root),
+                CAPABILITIES_ENVELOPE_ENV: str(root / capabilities_dir),
+            },
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         warnings.append(
@@ -1443,9 +1503,11 @@ MEMORY_ID_PATTERN = re.compile(r"(?m)^<!-- contextkit-memory-id: ([0-9a-f]{64}) 
 
 
 def _memory_location(root: Path) -> MemoryLocation:
+    cfg = _config(root)
+    default_rel = Path(cfg["sources"]["memory"])
     raw = os.environ.get(MEMORY_DIR_ENV)
     if raw is None or not raw.strip():
-        location = MemoryLocation(root / MEMORY_REL, MEMORY_REL.as_posix(), False)
+        location = MemoryLocation(root / default_rel, default_rel.as_posix(), False)
     else:
         expanded = os.path.expandvars(raw.strip())
         if re.search(r"\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}]+\})", expanded):
@@ -1467,9 +1529,10 @@ def _memory_location(root: Path) -> MemoryLocation:
             "The memory source must be a dedicated directory, not the project root or one of its ancestors.",
             6,
         )
-    cfg = _config(root)
+    # `sources.memory` is this location's own owner, so it never guards against itself.
     protected: list[tuple[str, Path]] = [
-        *[(f"sources.{name}", (root / rel).resolve()) for name, rel in cfg["sources"].items()],
+        *[(f"sources.{name}", (root / rel).resolve())
+          for name, rel in cfg["sources"].items() if name != "memory"],
         *[(f"targets.{name}", (root / rel).resolve()) for name, rel in cfg["targets"].items()],
     ]
     global_context: Path | None = cfg["global_context"]
@@ -1560,6 +1623,7 @@ def _render_memory_block(root: Path) -> tuple[str, list[MemoryFile]]:
 def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
     cfg = _config(root)
     sources = cfg["sources"]
+    body_root: Path = cfg["body_root"]
     context_dir = Path(sources["context"])
     routines_dir = Path(sources["routines"])
     capabilities_dir = Path(sources["capabilities"])
@@ -1591,6 +1655,15 @@ def _compose_context(root: Path, target: str) -> tuple[str, list[str]]:
         "",
         _runtime_block().strip(),
         "",
+    ]
+    if body_root != BODY_ROOT_DEFAULT:
+        out += [
+            f"This project keeps its visible body under `{body_root.as_posix()}/`. "
+            f"Read and write body layers there: `{context_dir.as_posix()}/`, "
+            f"`{Path(sources['assets']).as_posix()}/`, `{routines_dir.as_posix()}/`.",
+            "",
+        ]
+    out += [
         "---",
         "",
         _guide_menu().strip(),
@@ -1943,10 +2016,20 @@ def _context_file(title: str, description: str, load: str, order: int, body: str
     )
 
 
-def _config_body() -> str:
-    return """version = 1
+def _config_body(body_root: str | None = None) -> str:
+    if body_root is not None and Path(body_root.strip()).as_posix() not in {".", "./"}:
+        body_block = f'[body]\nroot = "{Path(body_root.strip()).as_posix()}"\n'
+    else:
+        body_block = (
+            "[body]\n"
+            "# Visible folder that holds the agent body. Use `.` to keep the layers at\n"
+            "# the project root, or a folder name to collapse them into one home.\n"
+            '# root = "agent"\n'
+        )
+    return f"""version = 1
 type = "agent-project"
 
+{body_block}
 [sources]
 # Optional shared doctrine outside this project:
 # global_context = "~/contextkit-global"
@@ -1959,8 +2042,13 @@ output = ".claude/rules/CONTEXT.md"
 """
 
 
-def _binding_readme() -> str:
-    return """# ContextKit Binding
+def _binding_readme(sources: dict[str, str]) -> str:
+    context_rel = Path(sources["context"]).as_posix()
+    assets_rel = Path(sources["assets"]).as_posix()
+    routines_rel = Path(sources["routines"]).as_posix()
+    capabilities_rel = _capabilities_dir_from_sources(sources).as_posix()
+    memory_rel = Path(sources["memory"]).as_posix()
+    return f"""# ContextKit Binding
 
 This repository is managed by ContextKit, a local manager for agent project structure, project memory, and runtime context.
 
@@ -1983,48 +2071,73 @@ Common commands:
 - `contextkit guide global-context`
 - `contextkit guide memory`
 
-Add durable project context under `context/`. Configure optional cross-project doctrine with `sources.global_context`. Use `contextkit guide memory` before adding project memory. Put historical or supporting material under `assets/`. Put repeatable procedures under `routines/`. Put installed tool envelopes under `capabilities/`.
+Add durable project context under `{context_rel}/`. Configure optional cross-project doctrine with `sources.global_context`. Use `contextkit guide memory` before adding project memory, which lives under `{memory_rel}/`. Put historical or supporting material under `{assets_rel}/`. Put repeatable procedures under `{routines_rel}/`. Put installed tool envelopes under `{capabilities_rel}/`.
+
+Run `contextkit doctor` for the resolved body layout.
 """
 
 
-LAYER_DIRS = [
-    ".contextkit/audits",
-    "context",
-    "assets/sessions",
-    "assets/plans",
-    "assets/research",
-    "routines",
-    "capabilities",
-]
+def _layer_dirs(sources: dict[str, str]) -> list[str]:
+    # `LAZY_SOURCES` layers are omitted: they appear at first use, not at scaffolding.
+    assets = Path(sources["assets"])
+    return [
+        (Path(".contextkit") / "audits").as_posix(),
+        Path(sources["context"]).as_posix(),
+        (assets / "sessions").as_posix(),
+        (assets / "plans").as_posix(),
+        (assets / "research").as_posix(),
+        Path(sources["routines"]).as_posix(),
+        _capabilities_dir_from_sources(sources).as_posix(),
+    ]
 
 
-def _ensure_project_layers(root: Path, created: list[str], skipped: list[str]) -> None:
-    for rel in LAYER_DIRS:
+def _ensure_project_layers(root: Path, sources: dict[str, str], created: list[str], skipped: list[str]) -> None:
+    for rel in _layer_dirs(sources):
         path = root / rel
         if path.exists():
             skipped.append(str(path))
         else:
             path.mkdir(parents=True, exist_ok=True)
             created.append(str(path))
-    _write_if_missing(root / "capabilities" / "settings.json", '{\n  "capabilities": {}\n}\n', created, skipped)
+    gate = _capabilities_dir_from_sources(sources) / "settings.json"
+    _write_if_missing(root / gate, '{\n  "capabilities": {}\n}\n', created, skipped)
 
 
-def _init_project(root: Path, with_layers: bool = False, with_template: bool = False) -> dict[str, Any]:
+def _init_project(root: Path, with_layers: bool = False, with_template: bool = False,
+                  body_root: str | None = None) -> dict[str, Any]:
     created: list[str] = []
     changed: list[str] = []
     skipped: list[str] = []
-    _write_if_missing(root / CONFIG_REL, _config_body(), created, skipped)
-    _write_if_missing(root / README_REL, _binding_readme(), created, skipped)
+    config_path = root / CONFIG_REL
+    config_existed = config_path.exists()
+    _write_if_missing(config_path, _config_body(body_root), created, skipped)
+    cfg = _config(root)
+    if body_root is not None and config_existed and cfg["body_root"] != _parse_body_root({"body": {"root": body_root}}):
+        _die(
+            f"`--body-root {body_root}` conflicts with the existing body root "
+            f"`{cfg['body_root'].as_posix()}` in {CONFIG_REL.as_posix()}.\n"
+            "Edit `body.root` in the config and move the body layers yourself; ContextKit does not relocate an existing body.",
+            6,
+        )
+    sources = cfg["sources"]
+    _write_if_missing(root / README_REL, _binding_readme(sources), created, skipped)
     _ensure_gitignore(root, created, changed)
     _ensure_env_local(root, created, skipped)
     if with_layers or with_template:
-        _ensure_project_layers(root, created, skipped)
+        _ensure_project_layers(root, sources, created, skipped)
     if with_template:
-        template_root = _template_root()
+        context_base = _template_root() / "context"
+        target_base = Path(sources["context"])
         for source in _template_files():
-            rel = source.relative_to(template_root)
-            _write_if_missing(root / rel, source.read_text(), created, skipped)
-    return {"project": str(root), "created": created, "changed": changed, "skipped": skipped}
+            rel = source.relative_to(context_base)
+            _write_if_missing(root / target_base / rel, source.read_text(), created, skipped)
+    return {
+        "project": str(root),
+        "body_root": cfg["body_root"].as_posix(),
+        "created": created,
+        "changed": changed,
+        "skipped": skipped,
+    }
 
 
 def cmd_init(args: argparse.Namespace) -> None:
@@ -2034,7 +2147,15 @@ def cmd_init(args: argparse.Namespace) -> None:
     binding_only = bool(getattr(args, "binding_only", False))
     if binding_only and (with_layers or with_template):
         _die("`--binding-only` is the default and cannot be combined with `--with-layers` or `--with-template`.", 2)
-    _emit(_init_project(root, with_layers=with_layers, with_template=with_template), args.json)
+    _emit(
+        _init_project(
+            root,
+            with_layers=with_layers,
+            with_template=with_template,
+            body_root=getattr(args, "body_root", None),
+        ),
+        args.json,
+    )
 
 
 def _configured_project_ancestor(path: Path) -> Path | None:
@@ -2755,7 +2876,12 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     _confirm_bootstrap_conflicts(conflicts["confirm"], args.yes)
     confirmed_conflicts = conflicts["confirm"]
 
-    init = _init_project(root, with_layers=True, with_template=args.with_template)
+    init = _init_project(
+        root,
+        with_layers=True,
+        with_template=args.with_template,
+        body_root=getattr(args, "body_root", None),
+    )
     hooks = _install_hooks(root, targets)
     build_target = _bootstrap_build_target(targets)
     written, warnings = _build_targets(root, build_target)
@@ -2848,7 +2974,11 @@ def _doctor_report(root: Path) -> dict[str, Any]:
     problems: list[str] = []
     problems += [f"missing required file: {name}" for name, item in required_files.items() if not item["present"]]
     problems += [f"missing .gitignore guard: {pattern}" for pattern, present in gitignore_guards.items() if not present]
-    problems += [f"missing project layer: {name} ({item['path']})" for name, item in layers.items() if not item["present"]]
+    problems += [
+        f"missing project layer: {name} ({item['path']})"
+        for name, item in layers.items()
+        if not item["present"] and name not in LAZY_SOURCES
+    ]
     problems += [f"legacy dot layer present: {rel} -> {rel[1:]}" for rel in legacy_dot_layers]
     if global_context and not global_context["present"]:
         problems.append(f"missing global context source: {global_context['path']}")
@@ -2861,6 +2991,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "type": cfg["type"],
+        "body_root": cfg["body_root"].as_posix(),
         "ok": not problems,
         "problems": problems,
         "rule_sources": rule_sources,
@@ -2885,6 +3016,33 @@ def _doctor_report(root: Path) -> dict[str, Any]:
     return report
 
 
+def cmd_path(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    cfg = _config(root)
+    layers = dict(cfg["sources"])
+    if args.layer:
+        if args.layer not in layers:
+            _die(
+                f"unknown layer: {args.layer}\n"
+                f"Known layers: {', '.join(sorted(layers))}.",
+                2,
+            )
+        rel = layers[args.layer]
+        if args.json:
+            _emit({"project": str(root), "layer": args.layer, "relative": rel, "path": str(root / rel)}, True)
+        else:
+            _emit(str(root / rel))
+        return
+    _emit(
+        {
+            "project": str(root),
+            "body_root": cfg["body_root"].as_posix(),
+            "layers": {name: {"relative": rel, "path": str(root / rel)} for name, rel in sorted(layers.items())},
+        },
+        True,
+    )
+
+
 def cmd_doctor(args: argparse.Namespace) -> None:
     root = _find_project_root()
     report = _doctor_report(root)
@@ -2896,6 +3054,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "",
         f"Project: `{root}`",
         f"Type: `{report['type']}`",
+        f"Body root: `{report['body_root']}`",
         f"Status: {'ok' if report['ok'] else 'needs attention'}",
         "",
     ]
@@ -3319,21 +3478,24 @@ def _visible_layer_steps(root: Path, sources: dict[str, str]) -> list[MigrationS
                     detail="Configured capability source is absent. Create it before enabling capabilities.",
                 ))
             continue
+        target_rel = Path(sources[visible]).as_posix()
         legacy = root / f".{visible}"
-        target = root / visible
-        dirty = _git_status_paths(root, [f".{visible}", visible])
+        target = root / target_rel
+        dirty = _git_status_paths(root, [f".{visible}", target_rel])
         dirty_detail = ""
         if dirty:
             sample = ", ".join(f"`{item}`" for item in dirty[:8])
             dirty_detail = f" Git has uncommitted entries under this layer: {sample}" + (" ..." if len(dirty) > 8 else "")
+        parent_rel = Path(target_rel).parent.as_posix()
+        mkdir_prefix = "" if parent_rel in {"", "."} else f"mkdir -p {parent_rel} && "
         if legacy.exists() and not target.exists():
             stats = _tree_stats(legacy)
             steps.append(MigrationStep(
-                title=f"Rename `.{visible}/` to `{visible}/`",
+                title=f"Rename `.{visible}/` to `{target_rel}/`",
                 action="rename",
                 status="manual" if dirty else "ready",
                 detail=f"Legacy layer exists with {stats['files']} files and {stats['dirs']} directories; visible target is absent.{dirty_detail}",
-                command=f"git mv .{visible} {visible}",
+                command=f"{mkdir_prefix}git mv .{visible} {target_rel}",
             ))
         elif legacy.exists() and target.exists():
             legacy_files = _relative_file_set(legacy)
@@ -3343,7 +3505,7 @@ def _visible_layer_steps(root: Path, sources: dict[str, str]) -> list[MigrationS
             target_stats = _tree_stats(target)
             if collisions:
                 steps.append(MigrationStep(
-                    title=f"Merge `.{visible}/` into existing `{visible}/`",
+                    title=f"Merge `.{visible}/` into existing `{target_rel}/`",
                     action="merge",
                     status="manual",
                     detail=(
@@ -3355,26 +3517,26 @@ def _visible_layer_steps(root: Path, sources: dict[str, str]) -> list[MigrationS
                 ))
             else:
                 steps.append(MigrationStep(
-                    title=f"Merge `.{visible}/` into existing `{visible}/`",
+                    title=f"Merge `.{visible}/` into existing `{target_rel}/`",
                     action="merge",
                     status="manual" if dirty else "ready",
                     detail=(
                         f"Both source and target exist, but no file paths collide. Legacy has {legacy_stats['files']} files; "
                         f"target has {target_stats['files']} files. Preserve existing target-only content.{dirty_detail}"
                     ),
-                    command=f"rsync -a .{visible}/ {visible}/ && git rm -r .{visible}",
+                    command=f"{mkdir_prefix}rsync -a .{visible}/ {target_rel}/ && git rm -r .{visible}",
                 ))
         elif target.exists():
             stats = _tree_stats(target)
             steps.append(MigrationStep(
-                title=f"Keep `{visible}/`",
+                title=f"Keep `{target_rel}/`",
                 action="keep",
                 status="manual" if dirty else "ok",
                 detail=f"Visible layer already exists with {stats['files']} files and {stats['dirs']} directories.{dirty_detail}",
             ))
         else:
             steps.append(MigrationStep(
-                title=f"Create `{visible}/`",
+                title=f"Create `{target_rel}/`",
                 action="create",
                 status="ready",
                 detail="Layer is absent. `contextkit init --with-layers` creates empty project body layers; `contextkit init --with-template` also creates starter context files.",
@@ -4252,10 +4414,11 @@ Commands:
   contextkit help
   contextkit update --check [--json]
   contextkit update --apply [--yes] [--json]
-  contextkit bootstrap [--target codex|claude] [--target ...] [--with-template] [--yes] [--json]
+  contextkit bootstrap [--target codex|claude] [--target ...] [--with-template] [--body-root DIR] [--yes] [--json]
   contextkit doctor [--json]
-  contextkit init [--with-layers|--with-template] [--json]
-  contextkit adopt [--with-layers|--with-template] [--json]
+  contextkit path [context|assets|routines|capabilities|memory] [--json]
+  contextkit init [--with-layers|--with-template] [--body-root DIR] [--json]
+  contextkit adopt [--with-layers|--with-template] [--body-root DIR] [--json]
   contextkit global-context init <path> [--json]
   contextkit install-hooks --target codex|claude [--target ...]
   contextkit build --target codex|claude|all [--json]
@@ -4300,9 +4463,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("bootstrap")
     p.add_argument("--target", choices=["codex", "claude"], action="append")
     p.add_argument("--with-template", action="store_true")
+    p.add_argument("--body-root", metavar="DIR",
+                   help="visible folder that holds the agent body (default: the project root)")
     p.add_argument("--yes", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_bootstrap)
+
+    p = sub.add_parser("path", help="resolve where a project-body layer lives")
+    p.add_argument("layer", nargs="?", help="context, assets, routines, capabilities, or memory")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_path)
 
     p = sub.add_parser("doctor")
     p.add_argument("--json", action="store_true")
@@ -4312,6 +4482,8 @@ def build_parser() -> argparse.ArgumentParser:
     init_group = p.add_mutually_exclusive_group()
     init_group.add_argument("--with-layers", action="store_true")
     init_group.add_argument("--with-template", action="store_true")
+    p.add_argument("--body-root", metavar="DIR",
+                   help="visible folder that holds the agent body (default: the project root)")
     p.add_argument("--binding-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_init, adopt=False, binding_only=False)
@@ -4320,6 +4492,8 @@ def build_parser() -> argparse.ArgumentParser:
     adopt_group = p.add_mutually_exclusive_group()
     adopt_group.add_argument("--with-layers", action="store_true")
     adopt_group.add_argument("--with-template", action="store_true")
+    p.add_argument("--body-root", metavar="DIR",
+                   help="visible folder that holds the agent body (default: the project root)")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_init, adopt=True, binding_only=False)
 

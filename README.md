@@ -111,6 +111,10 @@ Layer roles:
 - `capabilities/` - project envelopes for enabled tools;
 - `.codex/` and `.claude/` - generated host runtime context and hooks.
 
+Layer names are canonical; their location is configured. By default the body layers sit at the project root. Set `body.root` in `.contextkit/config.toml`, or pass `--body-root <dir>` on the first bootstrap, to collapse `context/`, `assets/`, `routines/`, and `memory/` into one visible folder such as `agent/`.
+
+`body.root` locates the body; `sources.<layer>` names a layer inside it, for `context`, `assets`, `routines`, and `memory` alike. `CONTEXTKIT_MEMORY_DIR` still outranks `sources.memory` when a deployment needs memory on persistent storage outside the project. `capabilities/` stays at the project root, where the capabilities manager writes it. `contextkit path` resolves the layout for humans and tools.
+
 ## Product Source Layout
 
 ContextKit separates the sources it ships:

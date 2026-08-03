@@ -19,6 +19,24 @@ Bootstrap establishes:
 
 Existing project material has standing. Inspect before changing it. Visible body files are created only when absent. Existing body files remain in place.
 
+## Body Root
+
+Layer names are canonical; their location is configured. By default the layers sit at the project root. A project that wants one visible home for the agent body sets `body.root` in `.contextkit/config.toml`, or passes `--body-root <dir>` on the first `bootstrap`, `init`, or `adopt`:
+
+```sh
+contextkit bootstrap --body-root agent
+```
+
+The body root must be a visible relative folder inside the project. It moves `context/`, `assets/`, `routines/`, and the default memory root beneath it.
+
+`body.root` locates the body; `sources.<layer>` names a layer inside it. With `root = "agent"` and `sources.routines = "playbooks"`, routines resolve to `agent/playbooks/`. The same rule covers `context`, `assets`, `routines`, and `memory`. A source path must name a directory strictly inside the project.
+
+`capabilities/` stays at the project root: the capabilities manager is the sole writer of that envelope and resolves it independently. Move it only with an explicit `sources.capabilities`, and only when the manager resolves the same location.
+
+ContextKit does not relocate an existing body. To adopt a body root later, set `body.root`, move the layers with `git mv`, and rerun `contextkit doctor`.
+
+Use `contextkit path <layer>` to resolve one layer, or `contextkit path` for the whole layout. Tools that need a body layer should ask that command instead of assuming a location.
+
 ## Main Flow
 
 From the project root:

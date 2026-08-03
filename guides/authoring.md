@@ -17,6 +17,8 @@ Classify the material before writing:
 - ContextKit-native reports: `.contextkit/`;
 - generated host context: never edit by hand.
 
+Layer names are canonical; their location is configured. A project may hold the visible body under a `body.root` folder, so resolve a layer's actual path with `contextkit path <layer>` before creating a file.
+
 Placement tests:
 
 - settled and true for future sessions: live doctrine;

@@ -22,6 +22,8 @@ Before non-trivial work that changes behavior or durable project material, spans
 
 `.contextkit/` is technical binding, config, and ContextKit-native artifacts. It is not project doctrine.
 
+Layer names below are canonical. A project may hold them under a configured visible body root, so resolve a layer's actual location with `contextkit path <layer>` before assuming it sits at the project root.
+
 `context/` is live project doctrine. Use `contextkit guide authoring`.
 
 Configured global context is shared live doctrine outside the project that compiles through the same context-file contract. Use `contextkit guide global-context`.
