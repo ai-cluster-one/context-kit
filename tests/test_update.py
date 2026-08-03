@@ -165,14 +165,14 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(missing.returncode, 5)
         self.assertIn("fetch failed", missing.stderr)
 
-    def test_previous_0_1_1_release_updates_to_current_patch_release(self) -> None:
+    def test_previous_0_1_1_release_updates_to_the_current_release(self) -> None:
         self.write_release(version="0.1.1")
         installed = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(installed.returncode, 0, installed.stderr)
         self.assertEqual(json.loads((self.install_home / "release.json").read_text())["version"], "0.1.1")
 
         current = json.loads((REPO_ROOT / "release.json").read_text())
-        self.assertEqual(current["version"], "0.1.4")
+        self.assertEqual(current["version"], "0.2.0")
         release = self.remote / self.ref
         shutil.rmtree(release)
         for rel in current["files"]:
@@ -186,18 +186,18 @@ class UpdateTests(unittest.TestCase):
         check_report = json.loads(checked.stdout)
         self.assertEqual(check_report["status"], "update_available")
         self.assertEqual(check_report["current"]["version"], "0.1.1")
-        self.assertEqual(check_report["available"]["version"], "0.1.4")
+        self.assertEqual(check_report["available"]["version"], "0.2.0")
 
         applied = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(applied.returncode, 0, applied.stderr)
         apply_report = json.loads(applied.stdout)
         self.assertEqual(apply_report["status"], "updated")
-        self.assertEqual(apply_report["current"]["version"], "0.1.4")
+        self.assertEqual(apply_report["current"]["version"], "0.2.0")
         self.assertEqual(json.loads((self.install_home / "release.json").read_text()), current)
 
     def test_fresh_install_of_current_release_converges(self) -> None:
         current = json.loads((REPO_ROOT / "release.json").read_text())
-        self.assertEqual(current["version"], "0.1.4")
+        self.assertEqual(current["version"], "0.2.0")
         release = self.remote / self.ref
         for rel in current["files"]:
             destination = release / rel
@@ -210,27 +210,27 @@ class UpdateTests(unittest.TestCase):
         check_report = json.loads(checked.stdout)
         self.assertEqual(check_report["status"], "update_available")
         self.assertIsNone(check_report["current"])
-        self.assertEqual(check_report["available"]["version"], "0.1.4")
+        self.assertEqual(check_report["available"]["version"], "0.2.0")
 
         applied = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(applied.returncode, 0, applied.stderr)
         apply_report = json.loads(applied.stdout)
         self.assertEqual(apply_report["status"], "updated")
-        self.assertEqual(apply_report["current"]["version"], "0.1.4")
+        self.assertEqual(apply_report["current"]["version"], "0.2.0")
         self.assertEqual(json.loads((self.install_home / "release.json").read_text()), current)
 
         recheck = self.run_cli("update", "--check", "--json")
         self.assertEqual(recheck.returncode, 0, recheck.stderr)
         self.assertEqual(json.loads(recheck.stdout)["status"], "up_to_date")
 
-    def test_previous_0_1_3_release_updates_to_0_1_4(self) -> None:
-        self.write_release(version="0.1.3")
+    def test_previous_0_1_4_release_updates_to_0_2_0(self) -> None:
+        self.write_release(version="0.1.4")
         installed = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(installed.returncode, 0, installed.stderr)
-        self.assertEqual(json.loads((self.install_home / "release.json").read_text())["version"], "0.1.3")
+        self.assertEqual(json.loads((self.install_home / "release.json").read_text())["version"], "0.1.4")
 
         current = json.loads((REPO_ROOT / "release.json").read_text())
-        self.assertEqual(current["version"], "0.1.4")
+        self.assertEqual(current["version"], "0.2.0")
         release = self.remote / self.ref
         shutil.rmtree(release)
         for rel in current["files"]:
@@ -243,14 +243,14 @@ class UpdateTests(unittest.TestCase):
         self.assertEqual(checked.returncode, 0, checked.stderr)
         check_report = json.loads(checked.stdout)
         self.assertEqual(check_report["status"], "update_available")
-        self.assertEqual(check_report["current"]["version"], "0.1.3")
-        self.assertEqual(check_report["available"]["version"], "0.1.4")
+        self.assertEqual(check_report["current"]["version"], "0.1.4")
+        self.assertEqual(check_report["available"]["version"], "0.2.0")
 
         applied = self.run_cli("update", "--apply", "--yes", "--json")
         self.assertEqual(applied.returncode, 0, applied.stderr)
         apply_report = json.loads(applied.stdout)
         self.assertEqual(apply_report["status"], "updated")
-        self.assertEqual(apply_report["current"]["version"], "0.1.4")
+        self.assertEqual(apply_report["current"]["version"], "0.2.0")
         self.assertEqual(json.loads((self.install_home / "release.json").read_text()), current)
 
     def test_checksum_failure_does_not_replace_installed_release(self) -> None:
