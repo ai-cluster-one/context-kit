@@ -27,11 +27,11 @@ Layer names are canonical; their location is configured. By default the layers s
 contextkit bootstrap --body-root agent
 ```
 
-The body root must be a visible relative folder inside the project. It moves `context/`, `assets/`, `routines/`, and the default memory root beneath it.
+The body root must be a visible relative folder inside the project. It moves `context/`, `assets/`, `routines/`, `capabilities/`, and the default memory root beneath it, so a collapsed body leaves nothing behind at the project root.
 
-`body.root` locates the body; `sources.<layer>` names a layer inside it. With `root = "agent"` and `sources.routines = "playbooks"`, routines resolve to `agent/playbooks/`. The same rule covers `context`, `assets`, `routines`, and `memory`. A source path must name a directory strictly inside the project.
+`body.root` locates the body; `sources.<layer>` names a layer inside it. With `root = "agent"` and `sources.routines = "playbooks"`, routines resolve to `agent/playbooks/`. The same rule covers `context`, `assets`, `routines`, `memory`, and `capabilities`. A source path must name a directory strictly inside the project.
 
-`capabilities/` stays at the project root: the capabilities manager is the sole writer of that envelope and resolves it independently. Move it only with an explicit `sources.capabilities`, and only when the manager resolves the same location.
+The capability envelope has one owner for its place and another for its contents: ContextKit dictates where it sits, and the capabilities manager, sole writer of everything inside it, asks `contextkit path capabilities` on every invocation rather than assuming a location. Configure the envelope through `body.root` like any other layer. The legacy `sources.capabilities = ".capabilities"` bridge names a fixed project-root location and is never rooted.
 
 ContextKit does not relocate an existing body. To adopt a body root later, set `body.root`, move the layers with `git mv`, and rerun `contextkit doctor`.
 
