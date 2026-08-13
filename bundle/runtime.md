@@ -12,6 +12,7 @@ ContextKit gives the project a visible source body, generated host runtime conte
 - Use always-on context for orientation, law, routing, and safety.
 - Load stub context, guides, routines, assets, capabilities, and tools only when the task calls for them.
 - State live doctrine in present tense.
+- Write prose as one line per paragraph; leave wrapping to the reader's editor and never break a line by hand.
 - Preserve evidence as evidence; promote durable conclusions deliberately.
 - Prove tool readiness at use time with the owning tool.
 - Stop for human approval before destructive, external, publishing, credential, access, or product-direction consequences.
