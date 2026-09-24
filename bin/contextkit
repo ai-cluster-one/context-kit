@@ -30,6 +30,81 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     tomllib = None
 
 
+MIN_PYTHON = (3, 11)
+PYTHON_ENV = "CONTEXTKIT_PYTHON"
+PYTHON_BOOTSTRAP_ENV = "CONTEXTKIT_PYTHON_BOOTSTRAP"
+# Highest interpreter minor version this manager looks for before falling back
+# to older supported ones. Names carry the version, so no candidate is probed.
+PYTHON_SEARCH_CEILING = 30
+
+
+def _python_candidate_names(explicit: str | None) -> list[str]:
+    if explicit:
+        return [explicit]
+    return [f"python3.{minor}" for minor in range(PYTHON_SEARCH_CEILING, MIN_PYTHON[1] - 1, -1)]
+
+
+def _resolved_python(name: str) -> str | None:
+    if os.path.sep in name:
+        return name if os.access(name, os.X_OK) else None
+    found = shutil.which(name)
+    # An empty PATH component resolves relative to the working directory, so a
+    # file in the project could otherwise stand in for an interpreter.
+    return found if found and os.path.isabs(found) else None
+
+
+def _bootstrap_interpreter() -> None:
+    """Run under a supported interpreter whatever `python3` resolves to.
+
+    A host may start this manager through a shell whose `python3` predates the
+    version ContextKit needs. The manager re-executes itself with the newest
+    interpreter it can find on PATH, or with the one named by `CONTEXTKIT_PYTHON`.
+    When it finds none, it continues under the current interpreter so commands
+    that do not need the newer version still run.
+    """
+    attempted = [
+        item for item in os.environ.get(PYTHON_BOOTSTRAP_ENV, "").split(os.pathsep) if item
+    ]
+    if sys.version_info >= MIN_PYTHON:
+        # The guard bounds one re-execution chain. Clearing it here keeps it out
+        # of the environment this manager hands to hooks, engines and children.
+        os.environ.pop(PYTHON_BOOTSTRAP_ENV, None)
+        return
+    required = ".".join(str(part) for part in MIN_PYTHON)
+    running = ".".join(str(part) for part in sys.version_info[:3])
+    explicit = os.environ.get(PYTHON_ENV) or None
+    if explicit and os.pathsep in explicit:
+        sys.stderr.write(
+            f"{PYTHON_ENV} must name one executable without `{os.pathsep}`: {explicit}\n"
+        )
+        raise SystemExit(6)
+    script = os.path.abspath(__file__)
+    for name in _python_candidate_names(explicit):
+        executable = _resolved_python(name)
+        # Every interpreter this chain already tried is recorded, so the search
+        # always shortens and a shim that re-enters cannot loop.
+        if executable is None or executable in attempted:
+            continue
+        environment = dict(os.environ)
+        environment[PYTHON_BOOTSTRAP_ENV] = os.pathsep.join([*attempted, executable])
+        try:
+            os.execve(executable, [executable, script, *sys.argv[1:]], environment)
+        except OSError:
+            continue
+    os.environ.pop(PYTHON_BOOTSTRAP_ENV, None)
+    if explicit:
+        sys.stderr.write(
+            f"{PYTHON_ENV} does not name a Python {required}+ executable: {explicit}\n"
+            f"ContextKit is running {running}; name a supported interpreter, then run the command again.\n"
+        )
+        raise SystemExit(6)
+    # No supported interpreter is reachable. Commands that do not need one keep
+    # working here; the command that needs it names the requirement itself.
+
+
+_bootstrap_interpreter()
+
+
 VERSION = 1
 CONFIG_REL = Path(".contextkit") / "config.toml"
 README_REL = Path(".contextkit") / "README.md"
@@ -54,6 +129,12 @@ DEFAULT_TARGETS = {
     "codex": Path(".codex") / "generated" / "context.md",
     "claude": Path(".claude") / "rules" / "CONTEXT.md",
 }
+# Codex adds synchronous SessionStart hook output to the session as developer
+# context. A limit of 0 keeps that injection unlimited, so the generated target
+# is delivered whole and only the model context window bounds it.
+CODEX_HOOK_CONTEXT_LIMIT = 0
+# Session moments the managed Codex hook covers.
+CODEX_SESSION_MATCHER = "startup|resume|clear|compact"
 CAPABILITIES_MANAGER_ENV = "CAPABILITIES_MANAGER"
 CAPABILITIES_ENVELOPE_ENV = "CAPABILITIES_PROJECT_ENVELOPE"
 BUNDLE_REL = Path("bundle")
@@ -1095,7 +1176,11 @@ def _load_toml(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     if tomllib is None:
-        _die("Python 3.11+ is required to read .contextkit/config.toml", 6)
+        _die(
+            f"Python {'.'.join(str(part) for part in MIN_PYTHON)}+ is required to read {path}; "
+            f"set {PYTHON_ENV} to a supported interpreter",
+            6,
+        )
     try:
         return tomllib.loads(path.read_text())
     except Exception as exc:  # noqa: BLE001 - config error should be concise
@@ -1699,17 +1784,22 @@ def cmd_build(args: argparse.Namespace) -> None:
     _emit({"project": str(root), "written": written, "warnings": warnings_by_target}, args.json)
 
 
-def _codex_context_limit(root: Path) -> int | None:
-    path = root / ".codex" / "config.toml"
-    if not path.exists():
-        return None
-    _text, raw = _codex_top_level_config(path)
-    value = raw.get("project_doc_max_bytes")
-    if value is None:
-        return None
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        _die(f"invalid project_doc_max_bytes in {path}: expected a positive integer", 6)
-    return value
+def cmd_context(args: argparse.Namespace) -> None:
+    root = _find_project_root()
+    cfg = _config(root)
+    path = root / cfg["targets"][args.target]
+    route = f"Run `contextkit build --target {args.target}`, then read the target again."
+    try:
+        data = path.read_bytes()
+    except OSError as exc:
+        _die(f"cannot read generated {args.target} context at {path}: {_one_line(str(exc))}\n{route}", 6)
+    if b"\x00" in data:
+        _die(f"generated {args.target} context contains a NUL byte and cannot be delivered as text: {path}\n{route}", 6)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        _die(f"generated {args.target} context is not valid UTF-8: {path}: {_one_line(str(exc))}\n{route}", 6)
+    sys.stdout.write(text if text.endswith("\n") else text + "\n")
 
 
 def _build_targets(root: Path, target: str) -> tuple[dict[str, str], dict[str, list[str]]]:
@@ -1719,16 +1809,6 @@ def _build_targets(root: Path, target: str) -> tuple[dict[str, str], dict[str, l
     warnings_by_target: dict[str, list[str]] = {}
     for item in targets:
         text, warnings = _compose_context(root, item)
-        if item == "codex":
-            limit = _codex_context_limit(root)
-            size = len(text.encode())
-            if limit is not None and size > limit:
-                _die(
-                    f"generated Codex context is {size} bytes, but project_doc_max_bytes is {limit} in .codex/config.toml\n"
-                    "ContextKit will not write a target that Codex may truncate. Groom project memory or raise the reviewed Codex limit, then rebuild.\n"
-                    "Rule sources: `contextkit guide memory`; `contextkit guide hooks`.",
-                    6,
-                )
         output = root / cfg["targets"][item]
         output.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile("w", delete=False, dir=str(output.parent)) as tmp:
@@ -2333,7 +2413,20 @@ case "$target" in
     ;;
 esac
 
-contextkit build --target "$target" >/dev/null
+if ! contextkit build --target "$target" >/dev/null; then
+  printf 'ContextKit build failed; Codex received no generated project context.\\n' >&2
+  exit 1
+fi
+
+case "$target" in
+  codex|all)
+    if ! context="$(contextkit context --target codex)"; then
+      printf 'ContextKit could not read generated Codex context; Codex received no generated project context. Install the current ContextKit, then run: contextkit install-hooks --target codex\\n' >&2
+      exit 1
+    fi
+    printf '%s\\n' "$context"
+    ;;
+esac
 """
 
 
@@ -2349,70 +2442,177 @@ def _write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
 
 
-def _nested_toml_key_paths(value: Any, key: str, prefix: tuple[str, ...] = ()) -> list[str]:
-    if not isinstance(value, dict):
-        return []
-    paths: list[str] = []
-    for name, child in value.items():
-        current = (*prefix, name)
-        if name == key and prefix:
-            paths.append(".".join(current))
-        paths += _nested_toml_key_paths(child, key, current)
-    return paths
-
-
-def _codex_top_level_config(path: Path) -> tuple[str, dict[str, Any]]:
+def _codex_config_document(path: Path) -> tuple[str, dict[str, Any]]:
     if not path.exists():
         return "", {}
-    text = path.read_text()
-    raw = _load_toml(path)
-    for key in ("project_doc_fallback_filenames", "project_doc_max_bytes"):
-        nested = _nested_toml_key_paths(raw, key)
-        if nested:
-            _die(
-                f"Codex setting {key} must be top-level in {path}; found: {', '.join(nested)}\n"
-                "ContextKit preserved the existing config. Move the setting to the top level, then install the Codex hook again.",
-                6,
-            )
-    return text, raw
+    return path.read_text(), _load_toml(path)
 
 
-def _insert_top_level_toml(text: str, additions: list[str]) -> str:
-    if not additions:
-        return text if text.endswith("\n") else text + "\n"
-    lines = text.splitlines()
-    table_index = next((index for index, line in enumerate(lines) if re.match(r"\s*\[", line)), len(lines))
-    before = lines[:table_index]
-    after = lines[table_index:]
-    if before and before[-1].strip():
-        before.append("")
-    before += additions
-    if after:
-        before.append("")
-    return "\n".join([*before, *after]).rstrip() + "\n"
+def _toml_string_end(text: str, index: int) -> int:
+    """Return the offset after the TOML string starting at `index`, or -1."""
+    quote = text[index]
+    if text.startswith(quote * 3, index):
+        end = text.find(quote * 3, index + 3)
+        return -1 if end < 0 else end + 3
+    cursor = index + 1
+    while cursor < len(text):
+        char = text[cursor]
+        if char == "\\" and quote == '"':
+            cursor += 2
+            continue
+        if char == quote:
+            return cursor + 1
+        if char == "\n":
+            return -1
+        cursor += 1
+    return -1
 
 
-def _planned_codex_config(path: Path, context_rel: str) -> tuple[str, bool]:
-    config_text, config_raw = _codex_top_level_config(path)
-    additions: list[str] = []
+def _toml_value_end(text: str, index: int) -> int:
+    """Return the offset after the TOML value starting at `index`, or -1."""
+    depth = 0
+    end = index
+    cursor = index
+    while cursor < len(text):
+        char = text[cursor]
+        if char in "\"'":
+            closed = _toml_string_end(text, cursor)
+            if closed < 0:
+                return -1
+            cursor = end = closed
+            continue
+        if char == "#":
+            newline = text.find("\n", cursor)
+            cursor = len(text) if newline < 0 else newline
+            continue
+        if char in "[{":
+            depth += 1
+            cursor += 1
+            end = cursor
+            continue
+        if char in "]}":
+            depth -= 1
+            if depth < 0:
+                return -1
+            cursor += 1
+            end = cursor
+            if depth == 0:
+                return end
+            continue
+        if char == "\n":
+            if depth == 0:
+                return end
+            cursor += 1
+            continue
+        if not char.isspace():
+            end = cursor + 1
+        cursor += 1
+    return end if depth == 0 else -1
+
+
+def _toml_top_level_assignments(text: str) -> tuple[dict[str, tuple[int, int, int]], bool]:
+    """Map every top-level key to `(statement start, value start, value end)`.
+
+    The second value is False when the document cannot be scanned confidently,
+    so a caller can refuse to rewrite instead of guessing through the file.
+    """
+    bare_key = re.compile(r"[A-Za-z0-9_-]+")
+    assignments: dict[str, tuple[int, int, int]] = {}
+    cursor = 0
+    size = len(text)
+    while cursor < size:
+        char = text[cursor]
+        if char.isspace():
+            cursor += 1
+            continue
+        if char == "#":
+            newline = text.find("\n", cursor)
+            cursor = size if newline < 0 else newline + 1
+            continue
+        if char == "[":
+            return assignments, True
+        start = cursor
+        parts: list[str] = []
+        while True:
+            if cursor < size and text[cursor] in "\"'":
+                closed = _toml_string_end(text, cursor)
+                if closed < 0:
+                    return assignments, False
+                parts.append(text[cursor + 1:closed - 1])
+                cursor = closed
+            else:
+                match = bare_key.match(text, cursor)
+                if match is None:
+                    return assignments, False
+                parts.append(match.group(0))
+                cursor = match.end()
+            while cursor < size and text[cursor] in " \t":
+                cursor += 1
+            if cursor < size and text[cursor] == ".":
+                cursor += 1
+                while cursor < size and text[cursor] in " \t":
+                    cursor += 1
+                continue
+            break
+        if cursor >= size or text[cursor] != "=":
+            return assignments, False
+        cursor += 1
+        while cursor < size and text[cursor] in " \t":
+            cursor += 1
+        value_start = cursor
+        value_end = _toml_value_end(text, cursor)
+        if value_end < 0:
+            return assignments, False
+        assignments.setdefault(".".join(parts), (start, value_start, value_end))
+        cursor = value_end
+    return assignments, True
+
+
+def _planned_codex_config(path: Path, context_rel: str) -> dict[str, Any]:
+    """Plan removal of the generated target from Codex project-doc fallbacks.
+
+    ContextKit delivers generated Codex context through the SessionStart hook,
+    so the generated target is not a Codex project document. Codex rejects a
+    fallback filename that carries a path, so an entry left by an older
+    installation is removed while every other Codex setting stays untouched.
+    When the assignment cannot be located confidently, the plan blocks and the
+    file keeps its current content.
+    """
+    config_text, config_raw = _codex_config_document(path)
+    plan = {"text": config_text, "changed": False, "blocked": None}
     fallback = config_raw.get("project_doc_fallback_filenames")
-    if fallback is None:
-        additions.append(f'project_doc_fallback_filenames = ["{context_rel}"]')
-    elif not isinstance(fallback, list) or not all(isinstance(item, str) for item in fallback):
-        _die(f"Codex project_doc_fallback_filenames must be a top-level string array: {path}\nContextKit preserved the existing config.", 6)
-    elif context_rel not in fallback:
-        _die(
-            f"Codex project_doc_fallback_filenames does not include {context_rel}: {path}\n"
-            "ContextKit preserved the existing config. Add the generated target to the top-level array, then install the hook again.",
-            6,
+    if not isinstance(fallback, list) or context_rel not in fallback:
+        return plan
+    assignments, scanned = _toml_top_level_assignments(config_text)
+    span = assignments.get("project_doc_fallback_filenames")
+    if not scanned or span is None:
+        plan["blocked"] = (
+            f"Codex project_doc_fallback_filenames lists {context_rel} in {path}, "
+            "and ContextKit cannot locate that assignment safely. "
+            "ContextKit preserved the existing config. Remove the entry by hand, then install the Codex hook again."
         )
-    max_bytes = config_raw.get("project_doc_max_bytes")
-    if max_bytes is None:
-        additions.append("project_doc_max_bytes = 131072")
-    elif isinstance(max_bytes, bool) or not isinstance(max_bytes, int) or max_bytes <= 0:
-        _die(f"Codex project_doc_max_bytes must be a positive top-level integer: {path}\nContextKit preserved the existing config.", 6)
-    next_config = _insert_top_level_toml(config_text, additions)
-    return next_config, next_config != config_text
+        return plan
+    start, value_start, value_end = span
+    remaining = [item for item in fallback if item != context_rel]
+    if remaining:
+        next_text = config_text[:value_start] + json.dumps(remaining, ensure_ascii=False) + config_text[value_end:]
+    else:
+        line_start = config_text.rfind("\n", 0, start) + 1
+        tail = config_text[value_end:]
+        newline = tail.find("\n")
+        trailing = (tail if newline < 0 else tail[:newline]).strip()
+        head = config_text[:line_start] + config_text[line_start:start]
+        rest = config_text[value_end + (len(tail) if newline < 0 else newline + 1):]
+        if trailing:
+            next_text = head + trailing + "\n" + rest
+        else:
+            head = config_text[:line_start]
+            while rest.startswith("\n") and (not head or head.endswith("\n\n")):
+                rest = rest[1:]
+            next_text = head + rest
+    plan["text"] = next_text
+    plan["changed"] = next_text != config_text
+    return plan
 
 
 def _validated_session_hooks(container: dict[str, Any], path: Path, label: str) -> list[dict[str, Any]]:
@@ -2450,7 +2650,10 @@ def _json_object_for_update(path: Path, label: str) -> tuple[dict[str, Any], boo
 
 def _preflight_codex_binding(root: Path) -> tuple[Path, str, bool, Path, dict[str, Any]]:
     config = root / ".codex" / "config.toml"
-    next_config, changed_config = _planned_codex_config(config, DEFAULT_TARGETS["codex"].as_posix())
+    plan = _planned_codex_config(config, DEFAULT_TARGETS["codex"].as_posix())
+    if plan["blocked"]:
+        _die(plan["blocked"], 6)
+    next_config, changed_config = plan["text"], plan["changed"]
     hooks_path = root / ".codex" / "hooks.json"
     hooks, _existed = _json_object_for_update(hooks_path, "Codex hooks")
     _validated_session_hooks(hooks, hooks_path, "Codex")
@@ -2474,8 +2677,8 @@ def _wire_codex(root: Path) -> dict[str, Any]:
     build.parent.mkdir(parents=True, exist_ok=True)
     build.write_text(body)
     build.chmod(build.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    config.parent.mkdir(parents=True, exist_ok=True)
-    if changed_config or not config.exists():
+    if changed_config:
+        config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(next_config)
 
     session = hooks.setdefault("hooks", {}).setdefault("SessionStart", [])
@@ -2484,15 +2687,41 @@ def _wire_codex(root: Path) -> dict[str, Any]:
         "/bin/bash \"$root/.codex/hooks/build-context.sh\"'"
     )
     hook_added = False
-    if not any(command in (hook or {}).get("command", "")
-               for entry in session for hook in (entry or {}).get("hooks", [])):
+    hook_changed = False
+    # One predicate decides what ContextKit owns here, in doctor, and in migrate:
+    # any SessionStart hook that invokes the managed adapter.
+    managed = _codex_session_hooks(hooks)
+    for index, (entry, hook) in enumerate(managed):
+        if index:
+            # ContextKit delivers its adapter once per session; a duplicate
+            # invocation would inject the generated context again.
+            entry["hooks"] = [item for item in (entry.get("hooks") or []) if item is not hook]
+            if not entry["hooks"] and entry in session:
+                session.remove(entry)
+            hook_changed = True
+            continue
+        if hook.get("command") != command:
+            hook["command"] = command
+            hook_changed = True
+        if hook.get("additionalContextLimit") != CODEX_HOOK_CONTEXT_LIMIT:
+            hook["additionalContextLimit"] = CODEX_HOOK_CONTEXT_LIMIT
+            hook_changed = True
+        owned = all(
+            "build-context.sh" in str((item or {}).get("command", ""))
+            for item in (entry.get("hooks") or [])
+        )
+        if owned and entry.get("matcher") != CODEX_SESSION_MATCHER:
+            entry["matcher"] = CODEX_SESSION_MATCHER
+            hook_changed = True
+    if not managed:
         session.append({
-            "matcher": "startup|resume|clear|compact",
+            "matcher": CODEX_SESSION_MATCHER,
             "hooks": [{
                 "type": "command",
                 "command": command,
                 "timeout": 30,
                 "statusMessage": "Regenerating ContextKit context",
+                "additionalContextLimit": CODEX_HOOK_CONTEXT_LIMIT,
             }],
         })
         hook_added = True
@@ -2501,8 +2730,10 @@ def _wire_codex(root: Path) -> dict[str, Any]:
         "compiler": str(build),
         "compiler_changed": existing != body,
         "config": str(config),
+        "config_changed": changed_config,
         "hooks": str(hooks_path),
         "hook_added": hook_added,
+        "hook_changed": hook_changed,
     }
 
 
@@ -2751,10 +2982,7 @@ def _bootstrap_conflicts(root: Path, targets: list[str]) -> dict[str, list[Any]]
         blockers.append(f"legacy dot body layer present: {rel} -> {rel[1:]}; run `contextkit migrate --plan`")
 
     if "codex" in targets:
-        try:
-            _planned_codex_config(root / ".codex" / "config.toml", DEFAULT_TARGETS["codex"].as_posix())
-        except ContextKitError as exc:
-            blockers.append(str(exc))
+        blockers += _codex_config_problems(root)
         adapter = root / ".codex" / "hooks" / "build-context.sh"
         if adapter.exists() and not adapter.is_file():
             blockers.append(".codex/hooks/build-context.sh exists and is not a file")
@@ -2941,6 +3169,124 @@ def _guard_report(root: Path, sources: dict[str, str]) -> dict[str, bool]:
     return {line: line in patterns for line in _required_gitignore_lines(_capabilities_dir_from_sources(sources))}
 
 
+CODEX_REPAIR = "run `contextkit install-hooks --target codex`"
+
+
+def _codex_session_hooks(hooks: Any) -> list[tuple[dict[str, Any], dict[str, Any]]]:
+    """Return every `SessionStart` hook that calls the ContextKit adapter."""
+    if not isinstance(hooks, dict):
+        return []
+    container = hooks.get("hooks")
+    session = container.get("SessionStart") if isinstance(container, dict) else None
+    found: list[tuple[dict[str, Any], dict[str, Any]]] = []
+    for entry in session if isinstance(session, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        for hook in entry.get("hooks") or []:
+            if isinstance(hook, dict) and "build-context.sh" in str(hook.get("command", "")):
+                found.append((entry, hook))
+    return found
+
+
+def _codex_binding_installed(root: Path) -> bool:
+    """Report whether this project has a ContextKit-managed Codex binding."""
+    hooks_path = root / ".codex" / "hooks.json"
+    hooks = _read_json(hooks_path) if hooks_path.exists() else None
+    return (root / ".codex" / "hooks" / "build-context.sh").exists() or bool(_codex_session_hooks(hooks))
+
+
+def _codex_hook_problems(root: Path) -> list[str]:
+    """Report a managed Codex hook that cannot deliver generated context."""
+    if not _codex_binding_installed(root):
+        return []
+    hooks_path = root / ".codex" / "hooks.json"
+    hooks = _read_json(hooks_path) if hooks_path.exists() else None
+    delivering = _codex_session_hooks(hooks)
+    problems: list[str] = []
+    if hooks_path.exists() and not isinstance(hooks, dict):
+        problems.append(f"Codex hooks file is not a readable JSON object: {hooks_path}; {CODEX_REPAIR}")
+    elif not delivering:
+        problems.append(f"Codex SessionStart hook does not call the ContextKit build adapter; {CODEX_REPAIR}")
+    else:
+        if len(delivering) > 1:
+            problems.append(
+                f"{len(delivering)} Codex SessionStart hooks call the ContextKit build adapter, "
+                f"so generated context is delivered more than once; {CODEX_REPAIR}"
+            )
+        if not any(hook.get("additionalContextLimit") == CODEX_HOOK_CONTEXT_LIMIT for _entry, hook in delivering):
+            problems.append(
+                "Codex SessionStart hook does not emit generated context with "
+                f"additionalContextLimit {CODEX_HOOK_CONTEXT_LIMIT}; {CODEX_REPAIR}"
+            )
+        covered = {
+            moment
+            for entry, _hook in delivering
+            for moment in (
+                CODEX_SESSION_MATCHER.split("|")
+                if not isinstance(entry.get("matcher"), str)
+                else str(entry["matcher"]).split("|")
+            )
+        }
+        missing = [moment for moment in CODEX_SESSION_MATCHER.split("|") if moment not in covered]
+        if missing:
+            shared = any(
+                len(entry.get("hooks") or []) > 1
+                for entry, _hook in delivering
+                if not isinstance(entry.get("matcher"), str)
+                or [moment for moment in CODEX_SESSION_MATCHER.split("|") if moment not in str(entry["matcher"]).split("|")]
+            )
+            route = (
+                "give the ContextKit hook its own SessionStart entry, then " + CODEX_REPAIR
+                if shared else CODEX_REPAIR
+            )
+            problems.append(f"Codex SessionStart hook does not run at: {', '.join(missing)}; {route}")
+    return problems
+
+
+def _codex_adapter_problems(root: Path) -> list[str]:
+    """Report a Codex build adapter that cannot produce or emit generated context."""
+    if not _codex_binding_installed(root):
+        return []
+    adapter = root / ".codex" / "hooks" / "build-context.sh"
+    problems: list[str] = []
+    if not adapter.exists():
+        problems.append(f"Codex build adapter is missing: {adapter}; {CODEX_REPAIR}")
+    elif not adapter.is_file():
+        problems.append(f"Codex build adapter is not a file: {adapter}; {CODEX_REPAIR}")
+    else:
+        try:
+            body = adapter.read_text()
+        except OSError as exc:
+            problems.append(f"cannot read Codex build adapter {adapter}: {_one_line(str(exc))}; {CODEX_REPAIR}")
+        else:
+            if body != _codex_adapter():
+                problems.append(
+                    f"Codex build adapter is not the current ContextKit adapter: {adapter}; {CODEX_REPAIR}"
+                )
+    return problems
+
+
+def _codex_config_problems(root: Path) -> list[str]:
+    """Report a Codex config that still routes generated context as a project document."""
+    config = root / ".codex" / "config.toml"
+    try:
+        plan = _planned_codex_config(config, DEFAULT_TARGETS["codex"].as_posix())
+    except ContextKitError as exc:
+        return [str(exc)]
+    if plan["blocked"]:
+        return [plan["blocked"]]
+    if plan["changed"]:
+        return [
+            "Codex project_doc_fallback_filenames still lists the generated context path, "
+            f"which Codex rejects; {CODEX_REPAIR}"
+        ]
+    return []
+
+
+def _codex_delivery_problems(root: Path) -> list[str]:
+    return [*_codex_hook_problems(root), *_codex_adapter_problems(root), *_codex_config_problems(root)]
+
+
 def _doctor_report(root: Path) -> dict[str, Any]:
     cfg = _config(root)
     sources = cfg["sources"]
@@ -2972,6 +3318,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         if not item["present"] and name not in LAZY_SOURCES
     ]
     problems += [f"legacy dot layer present: {rel} -> {rel[1:]}" for rel in legacy_dot_layers]
+    problems += _codex_delivery_problems(root)
     if global_context and not global_context["present"]:
         problems.append(f"missing global context source: {global_context['path']}")
     elif global_context and not global_context["directory"]:
@@ -3588,8 +3935,18 @@ def _host_steps(root: Path) -> list[MigrationStep]:
     steps: list[MigrationStep] = []
     codex_build = root / ".codex" / "hooks" / "build-context.sh"
     if codex_build.exists():
-        if _file_contains(codex_build, "contextkit build --target codex"):
-            steps.append(MigrationStep("Codex build adapter", "keep", "ok", "`build-context.sh` already calls ContextKit."))
+        current = not _codex_adapter_problems(root)
+        owned = _file_contains(codex_build, "Generated by `contextkit install-hooks --target codex`")
+        if current:
+            steps.append(MigrationStep("Codex build adapter", "keep", "ok", "`build-context.sh` is the current ContextKit adapter."))
+        elif owned:
+            steps.append(MigrationStep(
+                "Codex build adapter",
+                "update",
+                "ready",
+                "`build-context.sh` is a ContextKit adapter from an earlier release.",
+                "contextkit install-hooks --target codex",
+            ))
         else:
             steps.append(MigrationStep(
                 "Codex build adapter",
@@ -3609,18 +3966,27 @@ def _host_steps(root: Path) -> list[MigrationStep]:
 
     codex_hooks = root / ".codex" / "hooks.json"
     if codex_hooks.exists():
-        if _file_contains(codex_hooks, ".codex/hooks/build-context.sh"):
-            steps.append(MigrationStep("Codex SessionStart hook", "keep", "ok", "`hooks.json` already calls the build adapter."))
-        else:
+        if not _file_contains(codex_hooks, ".codex/hooks/build-context.sh"):
             steps.append(MigrationStep("Codex SessionStart hook", "update", "ready", "`hooks.json` does not call the ContextKit build adapter.", "contextkit install-hooks --target codex"))
+        elif _codex_hook_problems(root):
+            steps.append(MigrationStep("Codex SessionStart hook", "update", "ready", "`hooks.json` calls the adapter but does not deliver the generated context at every managed session moment.", "contextkit install-hooks --target codex"))
+        else:
+            steps.append(MigrationStep("Codex SessionStart hook", "keep", "ok", "`hooks.json` delivers generated context through the build adapter."))
     else:
         steps.append(MigrationStep("Codex SessionStart hook", "create", "ready", "No Codex hook file found.", "contextkit install-hooks --target codex"))
 
     codex_config = root / ".codex" / "config.toml"
-    if codex_config.exists() and _file_contains(codex_config, ".codex/generated/context.md"):
-        steps.append(MigrationStep("Codex fallback config", "keep", "ok", "Codex fallback reads `.codex/generated/context.md`."))
+    try:
+        config_plan = _planned_codex_config(codex_config, DEFAULT_TARGETS["codex"].as_posix())
+    except ContextKitError as exc:
+        steps.append(MigrationStep("Codex project-doc fallback", "review", "manual", _one_line(str(exc))))
     else:
-        steps.append(MigrationStep("Codex fallback config", "update", "ready", "Codex fallback includes `.codex/generated/context.md`.", "contextkit install-hooks --target codex"))
+        if config_plan["blocked"]:
+            steps.append(MigrationStep("Codex project-doc fallback", "review", "manual", _one_line(config_plan["blocked"])))
+        elif config_plan["changed"]:
+            steps.append(MigrationStep("Codex project-doc fallback", "update", "ready", "`config.toml` still lists the generated target as a Codex project-doc fallback.", "contextkit install-hooks --target codex"))
+        else:
+            steps.append(MigrationStep("Codex project-doc fallback", "keep", "ok", "`config.toml` lists no generated target as a Codex project-doc fallback."))
 
     claude_settings = root / ".claude" / "settings.json"
     if claude_settings.exists():
@@ -4408,6 +4774,7 @@ Commands:
   contextkit global-context init <path> [--json]
   contextkit install-hooks --target codex|claude [--target ...]
   contextkit build --target codex|claude|all [--json]
+  contextkit context --target codex|claude
   contextkit memory add <text> [--title <title>] [--json]
   contextkit memory add --stdin [--title <title>] [--json]
   contextkit memory context [--json]
@@ -4429,6 +4796,7 @@ Environment:
   CONTEXTKIT_REF         explicit release ref; otherwise installed provenance, then main (CONTEXTKIT_TAG is compatible)
   CONTEXTKIT_SHA256      optional lowercase sha256 pin for the manager that may be installed
   CONTEXTKIT_MEMORY_DIR  persistent project-memory root; defaults to ./memory
+  CONTEXTKIT_PYTHON      interpreter to run this manager with; otherwise the newest Python 3.11+ on PATH
   CAPABILITIES_MANAGER   capabilities manager executable; defaults to `capabilities` on PATH
 """
 
@@ -4499,6 +4867,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target", choices=["codex", "claude", "all"], default="codex")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_build)
+
+    p = sub.add_parser("context", help="print the generated context of one host target")
+    p.add_argument("--target", choices=["codex", "claude"], default="codex")
+    p.set_defaults(func=cmd_context)
 
     p = sub.add_parser("memory", help="capture and inspect provider-neutral project memory")
     memory_sub = p.add_subparsers(dest="memory_command", required=True)

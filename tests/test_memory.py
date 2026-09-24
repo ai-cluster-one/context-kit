@@ -287,8 +287,7 @@ class MemoryTests(unittest.TestCase):
         self.assertTrue(result["claude"]["auto_memory_disabled"])
         claude_settings = json.loads((self.project / ".claude" / "settings.json").read_text())
         self.assertIs(claude_settings["autoMemoryEnabled"], False)
-        codex_config = (self.project / ".codex" / "config.toml").read_text()
-        self.assertNotIn("memory", codex_config.casefold())
+        self.assertFalse((self.project / ".codex" / "config.toml").exists())
 
     def test_existing_claude_memory_policy_is_preserved(self) -> None:
         settings_path = self.project / ".claude" / "settings.json"
@@ -337,34 +336,16 @@ class MemoryTests(unittest.TestCase):
                 self.assertNotIn("Traceback", installed.stderr)
                 self.assertEqual(settings_path.read_text(), original)
 
-    def test_codex_settings_are_inserted_before_existing_toml_tables(self) -> None:
+    def test_existing_codex_config_is_left_to_its_owner(self) -> None:
         config = self.project / ".codex" / "config.toml"
         config.parent.mkdir()
-        config.write_text("[features]\nexperimental = true\n")
-
-        installed = self.run_cli("install-hooks", "--target", "codex", "--json")
-        self.assertEqual(installed.returncode, 0, installed.stderr)
-        parsed = tomllib.loads(config.read_text())
-        self.assertEqual(parsed["project_doc_fallback_filenames"], [".codex/generated/context.md"])
-        self.assertEqual(parsed["project_doc_max_bytes"], 131072)
-        self.assertEqual(parsed["features"], {"experimental": True})
-        self.assertLess(config.read_text().index("project_doc_max_bytes"), config.read_text().index("[features]"))
-
-    def test_nested_codex_context_limit_is_preserved_and_blocked(self) -> None:
-        config = self.project / ".codex" / "config.toml"
-        config.parent.mkdir()
-        original = "[features]\nproject_doc_max_bytes = 131072\n"
+        original = "project_doc_max_bytes = 131072\n\n[features]\nexperimental = true\n"
         config.write_text(original)
 
         installed = self.run_cli("install-hooks", "--target", "codex", "--json")
-        self.assertEqual(installed.returncode, 6)
-        self.assertIn("must be top-level", installed.stderr)
+        self.assertEqual(installed.returncode, 0, installed.stderr)
         self.assertEqual(config.read_text(), original)
-        self.assertFalse((self.project / ".codex" / "hooks" / "build-context.sh").exists())
-
-        built = self.run_cli("build", "--target", "codex")
-        self.assertEqual(built.returncode, 6)
-        self.assertIn("must be top-level", built.stderr)
+        self.assertEqual(tomllib.loads(config.read_text())["features"], {"experimental": True})
 
     def test_memory_paths_cannot_escape_through_symlinks(self) -> None:
         outside = self.root / "outside"
@@ -419,20 +400,21 @@ class MemoryTests(unittest.TestCase):
         self.assertIn("must not be symlinks", imported.stderr)
         self.assertEqual(list(outside.iterdir()), [])
 
-    def test_codex_build_blocks_before_silent_context_truncation(self) -> None:
+    def test_large_memory_reaches_the_generated_codex_target_whole(self) -> None:
         installed = self.run_cli("install-hooks", "--target", "codex", "--json")
         self.assertEqual(installed.returncode, 0, installed.stderr)
         large_note = "x" * 140000
 
         added = self.run_cli("memory", "add", "--stdin", stdin=large_note)
-        self.assertEqual(added.returncode, 6)
-        self.assertIn("project_doc_max_bytes is 131072", added.stderr)
-        self.assertIn("will not write a target that Codex may truncate", added.stderr)
+        self.assertEqual(added.returncode, 0, added.stderr)
         self.assertTrue(any((self.project / "memory").glob("*.md")))
 
-        rendered = self.run_cli("memory", "context")
+        generated = (self.project / ".codex" / "generated" / "context.md").read_text()
+        self.assertIn(large_note, generated)
+
+        rendered = self.run_cli("context", "--target", "codex")
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
-        self.assertGreater(len(rendered.stdout), 140000)
+        self.assertEqual(rendered.stdout, generated)
 
 
 if __name__ == "__main__":

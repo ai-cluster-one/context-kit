@@ -133,6 +133,8 @@ ContextKit compiles project context, project memory when present, and an optiona
 - Codex: `.codex/generated/context.md`
 - Claude: `.claude/rules/CONTEXT.md`
 
+Each host binding delivers its own target. Use `contextkit guide hooks` for delivery behavior and `contextkit help` for the command that reads a generated target as its host receives it.
+
 Generated files are build artifacts. Edit the source body, then rebuild:
 
 ```sh
