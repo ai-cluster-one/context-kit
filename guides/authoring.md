@@ -94,7 +94,7 @@ Name a guide, tool, or configuration anchor when that named surface is itself th
 
 ```sh
 contextkit doctor
-contextkit build --target all
+contextkit build
 contextkit audit
 ```
 

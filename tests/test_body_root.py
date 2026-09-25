@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import codex_home  # noqa: F401  (isolates the Codex user config)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"
@@ -167,7 +169,7 @@ class BodyRootTests(unittest.TestCase):
             built = self.run_cli("build", "--target", "claude", cwd=project)
             self.assertEqual(built.returncode, 0, built.stderr)
 
-            generated = (project / ".claude" / "rules" / "CONTEXT.md").read_text()
+            generated = (project / ".contextkit" / "generated" / "context.md").read_text()
             self.assertIn("agent/context/", generated)
             self.assertIn("visible body under `agent/`", generated)
 

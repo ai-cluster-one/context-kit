@@ -10,11 +10,11 @@ Run:
 
 ```sh
 contextkit doctor
-contextkit build --target all
+contextkit build
 contextkit audit
 ```
 
-`doctor` checks shape, binding, local/generated guards, visible layers, legacy dot layers, configured targets, and an optional global context source. It reports where the capability envelope resolves but never judges its contents: ContextKit owns the envelope's location, the capabilities manager owns everything inside it and proves that through its own doctor.
+`doctor` checks shape, binding, local/generated guards, visible layers, legacy dot layers, the generated context and its host links, and an optional global context source. It reports where the capability envelope resolves but never judges its contents: ContextKit owns the envelope's location, the capabilities manager owns everything inside it and proves that through its own doctor.
 
 `build` proves project context, project memory when present, and configured global context can compile into host runtime context. Generated files are build artifacts; do not fix them by hand.
 
@@ -34,7 +34,7 @@ Machine checks are the floor. Review asks:
 
 ```sh
 contextkit doctor
-contextkit build --target all
+contextkit build
 contextkit audit
 git status --short
 ```

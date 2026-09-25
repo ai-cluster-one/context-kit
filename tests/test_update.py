@@ -11,6 +11,8 @@ import tempfile
 import unittest
 import urllib.error
 from pathlib import Path
+
+import codex_home  # noqa: F401  (isolates the Codex user config)
 from unittest import mock
 
 

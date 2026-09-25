@@ -52,7 +52,7 @@ Routines apply models; they do not own models. Describe a dependency by the mode
 ## Validation
 
 ```sh
-contextkit build --target all
+contextkit build
 contextkit audit
 ```
 

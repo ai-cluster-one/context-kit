@@ -51,6 +51,8 @@ An absent `memory/` directory is healthy. Bootstrap, initialization, and templat
 
 If a directory has files but no Git repository, bootstrap asks for a pre-bootstrap Git safeguard before ContextKit changes project files. `--yes` approves that safeguard and managed hook replacement.
 
+A Codex binding records folder and hook trust in the Codex user config so headless Codex sessions load the context; `--no-trust` leaves that config alone. Use `contextkit guide hooks` for what is recorded.
+
 Starter context templates are opt-in:
 
 ```sh
@@ -69,7 +71,7 @@ contextkit adopt
 contextkit adopt --with-layers
 contextkit adopt --with-template
 contextkit install-hooks --target codex --target claude
-contextkit build --target all
+contextkit build
 contextkit doctor
 contextkit audit
 ```
@@ -99,7 +101,7 @@ Merge collisions manually. Preserve historical material in `assets/`; promote on
 
 ## Host Delivery
 
-Agents learn project context through generated runtime context. Codex and Claude read generated targets from host bindings. Generated files are build artifacts: edit source files, then rebuild.
+Agents learn project context through one generated runtime context file that Codex and Claude each load through their own host link. Generated files are build artifacts: edit source files, then rebuild.
 
 ## Quality Bar
 

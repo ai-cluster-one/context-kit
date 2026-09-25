@@ -9,6 +9,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import codex_home  # noqa: F401  (isolates the Codex user config)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"

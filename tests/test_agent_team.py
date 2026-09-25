@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import codex_home  # noqa: F401  (isolates the Codex user config)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"
@@ -49,7 +51,7 @@ class AgentTeamTests(unittest.TestCase):
             built = self.run_cli("build", "--target", "codex", cwd=project)
             self.assertEqual(built.returncode, 0, built.stderr)
 
-            generated = (project / ".codex" / "generated" / "context.md").read_text()
+            generated = (project / ".contextkit" / "generated" / "context.md").read_text()
             self.assertIn("offer the user Direct or Agent Team mode once", generated)
             self.assertIn("give execution to one subagent", generated)
             self.assertIn("`contextkit guide agent-team`", generated)

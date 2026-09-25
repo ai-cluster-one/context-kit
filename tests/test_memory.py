@@ -8,6 +8,8 @@ import tomllib
 import unittest
 from pathlib import Path
 
+import codex_home  # noqa: F401  (isolates the Codex user config)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"
@@ -104,8 +106,7 @@ class MemoryTests(unittest.TestCase):
         self.assertNotIn("contextkit-memory-id", context.stdout)
 
         for target in [
-            self.project / ".codex" / "generated" / "context.md",
-            self.project / ".claude" / "rules" / "CONTEXT.md",
+            self.project / ".contextkit" / "generated" / "context.md",
         ]:
             generated = target.read_text()
             self.assertIn(context.stdout.strip(), generated)
@@ -125,7 +126,7 @@ class MemoryTests(unittest.TestCase):
 
         build = self.run_cli("build", "--target", "all")
         self.assertEqual(build.returncode, 0, build.stderr)
-        generated = (self.project / ".codex" / "generated" / "context.md").read_text()
+        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
         self.assertIn("## Memory Source: `memory/imports/claude/notes.md`", generated)
         self.assertIn("The cobalt deployment observation", generated)
 
@@ -159,7 +160,7 @@ class MemoryTests(unittest.TestCase):
         self.assertFalse((self.project / "memory").exists())
         self.assertEqual(len(list(persistent.glob("*.md"))), 1)
 
-        generated = (self.project / ".codex" / "generated" / "context.md").read_text()
+        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
         self.assertNotIn("- Project memory: `$CONTEXTKIT_MEMORY_DIR`", generated)
         self.assertIn("## Memory Source: `$CONTEXTKIT_MEMORY_DIR/", generated)
         self.assertNotIn(str(persistent), generated)
@@ -184,7 +185,7 @@ class MemoryTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
-        redeployed_context = (redeployed / ".codex" / "generated" / "context.md").read_text()
+        redeployed_context = (redeployed / ".contextkit" / "generated" / "context.md").read_text()
         self.assertIn("The persistent deployment observation", redeployed_context)
 
         status = self.run_cli("memory", "status", "--json", env=memory_env)
@@ -287,7 +288,8 @@ class MemoryTests(unittest.TestCase):
         self.assertTrue(result["claude"]["auto_memory_disabled"])
         claude_settings = json.loads((self.project / ".claude" / "settings.json").read_text())
         self.assertIs(claude_settings["autoMemoryEnabled"], False)
-        self.assertFalse((self.project / ".codex" / "config.toml").exists())
+        codex_config = tomllib.loads((self.project / ".codex" / "config.toml").read_text())
+        self.assertEqual(set(codex_config), {"project_doc_fallback_filenames", "project_doc_max_bytes"})
 
     def test_existing_claude_memory_policy_is_preserved(self) -> None:
         settings_path = self.project / ".claude" / "settings.json"
@@ -344,8 +346,10 @@ class MemoryTests(unittest.TestCase):
 
         installed = self.run_cli("install-hooks", "--target", "codex", "--json")
         self.assertEqual(installed.returncode, 0, installed.stderr)
-        self.assertEqual(config.read_text(), original)
-        self.assertEqual(tomllib.loads(config.read_text())["features"], {"experimental": True})
+        parsed = tomllib.loads(config.read_text())
+        self.assertEqual(parsed["features"], {"experimental": True})
+        self.assertEqual(set(parsed), {"features", "project_doc_fallback_filenames", "project_doc_max_bytes"})
+        self.assertTrue(config.read_text().endswith("\n\n[features]\nexperimental = true\n"))
 
     def test_memory_paths_cannot_escape_through_symlinks(self) -> None:
         outside = self.root / "outside"
@@ -409,7 +413,7 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(added.returncode, 0, added.stderr)
         self.assertTrue(any((self.project / "memory").glob("*.md")))
 
-        generated = (self.project / ".codex" / "generated" / "context.md").read_text()
+        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
         self.assertIn(large_note, generated)
 
         rendered = self.run_cli("context", "--target", "codex")

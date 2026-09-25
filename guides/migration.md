@@ -10,7 +10,7 @@ This guide is the operational rule source for migration. It applies Visible Body
 contextkit migrate --plan
 ```
 
-Read the plan before changing files. It reports visible layers, bootstrap files, host bindings, generated targets, and instruction files that may overlap with ContextKit output.
+Read the plan before changing files. It reports visible layers, bootstrap files, host bindings, the generated context and its host links, and foreign instruction files that hosts load outside ContextKit output.
 
 ## Classification
 
@@ -61,7 +61,7 @@ Provider-specific project memory is a migration input, not a canonical parallel 
 
 ```sh
 contextkit doctor
-contextkit build --target all
+contextkit build
 contextkit audit --write
 ```
 

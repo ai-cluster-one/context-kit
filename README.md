@@ -128,17 +128,17 @@ ContextKit separates the sources it ships:
 
 ## Runtime Context
 
-ContextKit compiles project context, project memory when present, and an optional configured global context source into host-specific generated context:
+ContextKit compiles project context, project memory when present, and an optional configured global context source into one generated context file, `.contextkit/generated/context.md` by default. Each host reads it through its own native instruction discovery:
 
-- Codex: `.codex/generated/context.md`
-- Claude: `.claude/rules/CONTEXT.md`
+- Codex: `.contextkit.md`, a project doc listed in `.codex/config.toml`
+- Claude: `.claude/rules/CONTEXT.md`, a project rule
 
-Each host binding delivers its own target. Use `contextkit guide hooks` for delivery behavior and `contextkit help` for the command that reads a generated target as its host receives it.
+Both are links to the one generated file. Use `contextkit guide hooks` for delivery behavior.
 
 Generated files are build artifacts. Edit the source body, then rebuild:
 
 ```sh
-contextkit build --target all
+contextkit build
 ```
 
 ContextKit's shipped runtime block lives under `bundle/`. Guides live under `guides/`. The manager reads them from the checkout, from the global install under `~/.contextkit/`, or from `CONTEXTKIT_BUNDLE_DIR` and `CONTEXTKIT_GUIDES_DIR`.
@@ -262,10 +262,10 @@ Install Codex and Claude host bindings:
 contextkit install-hooks --target codex --target claude
 ```
 
-Build all generated runtime contexts:
+Build the generated runtime context:
 
 ```sh
-contextkit build --target all
+contextkit build
 ```
 
 Check project shape and bindings:
@@ -348,11 +348,9 @@ type = "agent-project"
 # Optional shared doctrine outside this project:
 # global_context = "~/contextkit-global"
 
-[targets.codex]
-output = ".codex/generated/context.md"
-
-[targets.claude]
-output = ".claude/rules/CONTEXT.md"
+[output]
+# Generated context file every host reads through its own link.
+context = ".contextkit/generated/context.md"
 ```
 
 Default static project source folders are `context/`, `assets/`, `routines/`, and `capabilities/`. Project memory uses lazy `memory/` unless `CONTEXTKIT_MEMORY_DIR` selects a persistent root. `sources.global_context` is an explicit opt-in to one external shared-doctrine directory; omit it when the project has no global source.

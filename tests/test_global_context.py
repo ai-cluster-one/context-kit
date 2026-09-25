@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import codex_home  # noqa: F401  (isolates the Codex user config)
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"
@@ -91,8 +93,7 @@ class GlobalContextTests(unittest.TestCase):
         self.assertEqual(build.returncode, 0, build.stderr)
 
         for target in [
-            self.project / ".codex" / "generated" / "context.md",
-            self.project / ".claude" / "rules" / "CONTEXT.md",
+            self.project / ".contextkit" / "generated" / "context.md",
         ]:
             generated = target.read_text()
             resolved_global = self.global_context.resolve()
@@ -120,7 +121,7 @@ class GlobalContextTests(unittest.TestCase):
     def test_default_config_keeps_global_context_disabled_and_discoverable(self) -> None:
         build = self.run_cli("build", "--target", "codex")
         self.assertEqual(build.returncode, 0, build.stderr)
-        generated = (self.project / ".codex" / "generated" / "context.md").read_text()
+        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
         self.assertNotIn("- Global context:", generated)
         self.assertIn("`contextkit guide global-context`", generated)
 
@@ -448,7 +449,7 @@ class GlobalContextTests(unittest.TestCase):
             env={"TEST_CONTEXTKIT_GLOBAL": str(self.global_context)},
         )
         self.assertEqual(build.returncode, 0, build.stderr)
-        self.assertIn(f"## Global Source: `{context.resolve()}`", (self.project / ".codex" / "generated" / "context.md").read_text())
+        self.assertIn(f"## Global Source: `{context.resolve()}`", (self.project / ".contextkit" / "generated" / "context.md").read_text())
 
     def test_invalid_global_frontmatter_blocks_build(self) -> None:
         self.configure_global()
