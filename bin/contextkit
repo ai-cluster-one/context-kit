@@ -145,6 +145,11 @@ CODEX_DEFAULT_DOC_MAX_BYTES = 32768
 # only refreshes the generated file when a session begins.
 CODEX_SESSION_MATCHER = "startup|resume|clear"
 CODEX_HOME_ENV = "CODEX_HOME"
+# Generated context announces a newer release of the installed manager.
+UPDATE_CHECK_ENV = "CONTEXTKIT_UPDATE_CHECK"
+UPDATE_CHECK_CACHE = "update-check.json"
+UPDATE_CHECK_INTERVAL_SECONDS = 12 * 3600
+UPDATE_CHECK_TIMEOUT_SECONDS = 3
 # Instruction files hosts load outside the generated context.
 FOREIGN_INSTRUCTION_NAMES = ("AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "CLAUDE.local.md")
 CAPABILITIES_MANAGER_ENV = "CAPABILITIES_MANAGER"
@@ -1795,6 +1800,72 @@ def _foreign_instruction_block(files: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _available_update() -> dict[str, str] | None:
+    """Return the installed and available versions when a newer release exists.
+
+    Only the installed manager announces updates; a checkout runs its own
+    source. The source manifest is fetched at most once per interval, with one
+    short attempt, and any failure stays silent so a session never waits on it.
+    """
+    if os.environ.get(UPDATE_CHECK_ENV, "").strip().lower() in {"0", "off", "false", "no"}:
+        return None
+    try:
+        paths = _install_paths()
+        if _script_path() != paths.manager.resolve():
+            return None
+        current, current_bytes = _installed_release(paths.home)
+        if current is None:
+            return None
+        provenance, _findings = _installed_provenance(paths.home, current, current_bytes)
+        url = _release_url(_update_source(provenance))
+        installed = _release_version(current["version"], str(paths.home / RELEASE_MANIFEST), 7)
+    except ContextKitError:
+        return None
+    cache_path = paths.home / UPDATE_CHECK_CACHE
+    try:
+        cache = json.loads(cache_path.read_text())
+    except (OSError, ValueError):
+        cache = {}
+    now = time.time()
+    fresh = (
+        isinstance(cache, dict)
+        and cache.get("manifest") == url
+        and isinstance(cache.get("checked_at"), (int, float))
+        and 0 <= now - cache["checked_at"] < UPDATE_CHECK_INTERVAL_SECONDS
+    )
+    available = cache.get("version") if fresh else None
+    if not fresh:
+        try:
+            with urllib.request.urlopen(url, timeout=UPDATE_CHECK_TIMEOUT_SECONDS) as response:
+                value = json.loads(response.read(MAX_UPDATE_FILE_BYTES))
+            available = value.get("version") if isinstance(value, dict) else None
+        except (OSError, ValueError, urllib.error.URLError, http.client.HTTPException):
+            available = cache.get("version") if isinstance(cache, dict) and cache.get("manifest") == url else None
+        with contextlib.suppress(OSError):
+            _atomic_write_text(cache_path, json.dumps({"checked_at": now, "manifest": url, "version": available}) + "\n")
+    if not isinstance(available, str):
+        return None
+    try:
+        newer = _release_version(available, url) > installed
+    except ContextKitError:
+        return None
+    return {"installed": current["version"], "available": available} if newer else None
+
+
+def _update_notice_block(update: dict[str, str]) -> str:
+    return "\n".join([
+        "# ContextKit Update Available",
+        "",
+        f"ContextKit {update['available']} is available; this machine runs {update['installed']}. "
+        "Tell the user at the start of the session and ask whether to update now. Update only after the user confirms:",
+        "",
+        "1. `contextkit update --check` shows the installed and available releases.",
+        "2. `contextkit update --apply` installs the available release.",
+        "3. In each ContextKit project on this machine, run `contextkit migrate --plan`, apply the steps it lists "
+        "(usually `contextkit install-hooks --target <host>`), then `contextkit doctor`.",
+    ])
+
+
 def _compose_context(root: Path) -> tuple[str, list[str]]:
     cfg = _config(root)
     sources = cfg["sources"]
@@ -1845,6 +1916,9 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
         "---",
         "",
     ]
+    update = _available_update()
+    if update:
+        out += [_update_notice_block(update), "", "---", ""]
     foreign = _foreign_instruction_files(root, cfg["output"])
     if foreign:
         out += [_foreign_instruction_block(foreign), "", "---", ""]
@@ -5301,6 +5375,7 @@ Environment:
   CONTEXTKIT_SHA256      optional lowercase sha256 pin for the manager that may be installed
   CONTEXTKIT_MEMORY_DIR  persistent project-memory root; defaults to ./memory
   CONTEXTKIT_PYTHON      interpreter to run this manager with; otherwise the newest Python 3.11+ on PATH
+  CONTEXTKIT_UPDATE_CHECK  set to `off` to stop generated context from announcing a newer release
   CAPABILITIES_MANAGER   capabilities manager executable; defaults to `capabilities` on PATH
 """
 

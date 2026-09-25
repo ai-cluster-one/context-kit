@@ -73,6 +73,8 @@ contextkit update --apply
 
 Run `contextkit help` for non-interactive and source-override options.
 
+When the installed manager builds generated context and its release source offers a newer version, the context tells the agent to raise the update with the user and to run the update procedure only after the user confirms. The source is checked at most every twelve hours with one short request; set `CONTEXTKIT_UPDATE_CHECK=off` to stop the check.
+
 ## Project Body
 
 ```text

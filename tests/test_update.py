@@ -903,3 +903,92 @@ class UpdateTransactionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class UpdateNoticeTests(unittest.TestCase):
+    """Generated context from an installed manager announces a newer release."""
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.home = self.root / "install"
+        manager = self.home / ".manager" / "contextkit"
+        manager.parent.mkdir(parents=True)
+        shutil.copy2(CONTEXTKIT, manager)
+        for layer in ("bundle", "guides", "templates"):
+            shutil.copytree(REPO_ROOT / layer, self.home / layer)
+        self.manager = manager
+        self.ref = "notice-ref"
+        self.remote = self.root / "remote"
+        release = json.loads((REPO_ROOT / "release.json").read_text())
+        self.write_manifest(self.home / "release.json", release, "0.0.1")
+        self.release = release
+        self.publish("99.0.0")
+        self.project = self.root / "project"
+        self.project.mkdir()
+        subprocess.run(["git", "init", "-q", "."], cwd=self.project, check=True)
+        initialized = self.invoke(self.manager, "init", "--with-layers", "--json")
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+    def write_manifest(self, path: Path, release: dict, version: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({**release, "version": version}, indent=2, sort_keys=True) + "\n")
+
+    def publish(self, version: str) -> None:
+        self.write_manifest(self.remote / self.ref / "release.json", self.release, version)
+
+    def invoke(self, manager: Path, *args: str, **extra: str) -> subprocess.CompletedProcess[str]:
+        env = {
+            **{key: value for key, value in os.environ.items() if key != "CONTEXTKIT_UPDATE_CHECK"},
+            "CONTEXTKIT_HOME": str(self.home),
+            "CONTEXTKIT_BIN": str(self.root / "bin"),
+            "CONTEXTKIT_RAW_BASE": self.remote.as_uri(),
+            "CONTEXTKIT_REF": self.ref,
+            **extra,
+        }
+        return subprocess.run([str(manager), *args], cwd=self.project, env=env, text=True, capture_output=True, timeout=60)
+
+    def generated(self) -> str:
+        return (self.project / ".contextkit" / "generated" / "context.md").read_text()
+
+    def test_a_newer_release_is_announced_with_the_confirmed_update_procedure(self) -> None:
+        built = self.invoke(self.manager, "build")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        context = self.generated()
+        self.assertIn("# ContextKit Update Available", context)
+        self.assertIn("ContextKit 99.0.0 is available; this machine runs 0.0.1", context)
+        self.assertIn("Update only after the user confirms", context)
+        self.assertIn("`contextkit update --apply`", context)
+        self.assertIn("`contextkit migrate --plan`", context)
+        cache = json.loads((self.home / "update-check.json").read_text())
+        self.assertEqual(cache["version"], "99.0.0")
+
+    def test_the_check_is_cached_between_builds(self) -> None:
+        self.assertEqual(self.invoke(self.manager, "build").returncode, 0)
+        self.publish("0.0.1")
+        self.assertEqual(self.invoke(self.manager, "build").returncode, 0)
+        self.assertIn("ContextKit 99.0.0 is available", self.generated())
+
+    def test_a_current_release_adds_no_notice(self) -> None:
+        self.publish("0.0.1")
+        self.assertEqual(self.invoke(self.manager, "build").returncode, 0)
+        self.assertNotIn("ContextKit Update Available", self.generated())
+
+    def test_an_unreachable_source_adds_no_notice_and_does_not_fail(self) -> None:
+        shutil.rmtree(self.remote)
+        built = self.invoke(self.manager, "build")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        self.assertNotIn("ContextKit Update Available", self.generated())
+
+    def test_the_check_can_be_turned_off(self) -> None:
+        built = self.invoke(self.manager, "build", CONTEXTKIT_UPDATE_CHECK="off")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        self.assertNotIn("ContextKit Update Available", self.generated())
+        self.assertFalse((self.home / "update-check.json").exists())
+
+    def test_a_checkout_manager_never_checks(self) -> None:
+        built = self.invoke(CONTEXTKIT, "build")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        self.assertNotIn("ContextKit Update Available", self.generated())
+        self.assertFalse((self.home / "update-check.json").exists())
