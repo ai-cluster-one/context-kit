@@ -772,13 +772,15 @@ class ReleaseManifestTests(unittest.TestCase):
     def test_manifest_covers_the_installed_distribution(self) -> None:
         manifest = json.loads((REPO_ROOT / "release.json").read_text())
         self.assertEqual(manifest["schema"], 1)
-        expected = {"bin/contextkit", "bundle/runtime.md"}
-        for directory in ("guides", "templates"):
+        expected = {"bin/contextkit"}
+        for directory in ("bundle", "guides", "templates"):
             expected.update(
                 path.relative_to(REPO_ROOT).as_posix()
                 for path in (REPO_ROOT / directory).rglob("*")
                 if path.is_file()
             )
+        # The bundle README orients the repository; it is not shipped.
+        expected.discard("bundle/README.md")
         self.assertEqual(set(manifest["files"]), expected)
         for rel, expected_hash in manifest["files"].items():
             actual = hashlib.sha256((REPO_ROOT / rel).read_bytes()).hexdigest()

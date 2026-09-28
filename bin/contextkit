@@ -155,6 +155,7 @@ FOREIGN_INSTRUCTION_NAMES = ("AGENTS.md", "AGENTS.override.md", "CLAUDE.md", "CL
 CAPABILITIES_MANAGER_ENV = "CAPABILITIES_MANAGER"
 CAPABILITIES_ENVELOPE_ENV = "CAPABILITIES_PROJECT_ENVELOPE"
 BUNDLE_REL = Path("bundle")
+COLLABORATION_MODES = ("ask", "direct")
 GUIDES_REL = Path("guides")
 TEMPLATES_REL = Path("templates")
 GLOBAL_CONTEXT_TEMPLATE_REL = Path("global-context") / "GLOBAL-CONTEXT.md"
@@ -1325,10 +1326,24 @@ def _config(root: Path) -> dict[str, Any]:
                     6,
                 )
 
+    collaboration_mode = "ask"
+    raw_collaboration = raw.get("collaboration")
+    if raw_collaboration is not None:
+        value = raw_collaboration.get("mode") if isinstance(raw_collaboration, dict) else None
+        if value not in COLLABORATION_MODES:
+            _die(
+                f"invalid collaboration.mode: {value}\n"
+                f"Expected one of: {', '.join(COLLABORATION_MODES)}. "
+                "Use `contextkit guide agent-team` for what each mode delivers.",
+                6,
+            )
+        collaboration_mode = value
+
     return {
         "version": raw.get("version", VERSION),
         "type": raw.get("type", "agent-project"),
         "body_root": body_root,
+        "collaboration_mode": collaboration_mode,
         "sources": sources,
         "global_context": global_context,
         "global_context_raw": global_context_raw,
@@ -1474,6 +1489,10 @@ def _context_reference(item: ContextFile) -> str:
 
 def _runtime_block() -> str:
     return _read_bundle("runtime.md")
+
+
+def _collaboration_block() -> str:
+    return _read_bundle("collaboration.md")
 
 
 def _guide_summary(topic: str) -> tuple[str, str]:
@@ -1901,6 +1920,8 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
         _runtime_block().strip(),
         "",
     ]
+    if cfg["collaboration_mode"] == "ask":
+        out += [_collaboration_block().strip(), ""]
     if body_root != BODY_ROOT_DEFAULT:
         out += [
             f"This project keeps its visible body under `{body_root.as_posix()}/`. "
@@ -4900,6 +4921,9 @@ def _materialize_workbench_distribution(workbench: Path) -> None:
     runtime_path = bundle_dir / "runtime.md"
     runtime_path.write_text(runtime)
     runtime_path.chmod(0o444)
+    collaboration_path = bundle_dir / "collaboration.md"
+    collaboration_path.write_text(_collaboration_block())
+    collaboration_path.chmod(0o444)
     bundle_dir.chmod(0o555)
 
     provenance = {

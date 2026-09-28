@@ -355,7 +355,7 @@ type = "agent-project"
 context = ".contextkit/generated/context.md"
 ```
 
-Default static project source folders are `context/`, `assets/`, `routines/`, and `capabilities/`. Project memory uses lazy `memory/` unless `CONTEXTKIT_MEMORY_DIR` selects a persistent root. `sources.global_context` is an explicit opt-in to one external shared-doctrine directory; omit it when the project has no global source.
+Default static project source folders are `context/`, `assets/`, `routines/`, and `capabilities/`. Project memory uses lazy `memory/` unless `CONTEXTKIT_MEMORY_DIR` selects a persistent root. `sources.global_context` is an explicit opt-in to one external shared-doctrine directory; omit it when the project has no global source. Generated context offers Direct or Agent Team mode before non-trivial work; `[collaboration] mode = "direct"` turns that offer off, and `contextkit guide agent-team` owns both modes.
 
 `.gitignore` and `.env.local` are technical bootstrap files. Plain `contextkit init` creates only the binding files, a non-secret `.env.local` template, and gitignore guards for local env, generated runtime context, and capability state. Empty source layers require `contextkit init --with-layers`. Starter context templates require `contextkit init --with-template`.
 

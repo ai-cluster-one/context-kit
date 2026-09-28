@@ -1,8 +1,9 @@
 {
   "files": {
-    "bin/contextkit": "5cf615a0550876d242bc36bff9544e37023b363f918933ee12cf8885ef358ab0",
-    "bundle/runtime.md": "191881d87e26c364deb6b99b90944ceeb812c551e4d01ee4ccd572337ec921f7",
-    "guides/agent-team.md": "0c44546f297afbb0a4bfd2b66c18300c2a0ccfdbcb01b579f1cd67cad442ff21",
+    "bin/contextkit": "b868d3c8b2e9836a46c1192b2db84eb05eb25a61361776470964698c4caf698a",
+    "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
+    "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
+    "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "fe42a20746bd9358882c9663e0d5baea8f8721e7d5f2e64103f63264380f04f1",
@@ -30,5 +31,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.1"
+  "version": "0.3.2"
 }
