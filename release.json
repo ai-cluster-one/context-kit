@@ -1,13 +1,13 @@
 {
   "files": {
-    "bin/contextkit": "b868d3c8b2e9836a46c1192b2db84eb05eb25a61361776470964698c4caf698a",
+    "bin/contextkit": "40295a00d61e49b840bd1ff6536fdd03fc2956027f09a2d0713b912c9fe350b5",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "fe42a20746bd9358882c9663e0d5baea8f8721e7d5f2e64103f63264380f04f1",
-    "guides/bootstrap.md": "e0db170345aa9f4511eecd999e786a20a10bba01b496a7a8301bea6b2d4a7baf",
+    "guides/bootstrap.md": "427709d9cea96880700f216fee6a011b746aaf2544e43ef8a93f33e56207802a",
     "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
@@ -15,7 +15,7 @@
     "guides/hooks.md": "125c1ed742942ebdedd251dfc4b510ffb6193a9332bca8ddfaa463bfad8e2fa7",
     "guides/memory.md": "5ab1be355ab82c9b6b9515afe1dbc7be4708a2cc9d3660c1907a144c7c64e6eb",
     "guides/migration.md": "c8357ad51b2d115cf9e6995be9f8a9490556ddcd25e9abdd927a145170b42fcc",
-    "guides/routines.md": "87ac6abd8713fb02e82e5924a468ce0be98e5b4760c652618226b0a048b68924",
+    "guides/routines.md": "215e51f5c48e6d911f45c3a27b938614c53abb506d6cf55a1ce5257bf1e6a289",
     "guides/validation.md": "049876a593347240d7a37f94add53a1841a9c35a69f433beb4873e79b8838916",
     "guides/workbench.md": "619ed06120dfb10ab4a322fc8e92ca9835a7a55b80f87225e9183ea24265f13d",
     "templates/README.md": "f0dd6181e5c2419a50b82ad1ac0f230f7ab1e44e1ab97b92b04d6f92649044ad",
@@ -31,5 +31,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.2"
+  "version": "0.3.3"
 }

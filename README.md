@@ -104,7 +104,7 @@ capabilities/
 
 Layer roles:
 
-- `.contextkit/` - technical binding, config, and ContextKit-native audit reports;
+- `.contextkit/` - technical binding, config, agent identity, and ContextKit-native audit reports;
 - `context/` - live project doctrine and routing surface;
 - configured global context - live doctrine inherited by every project that opts into the external source;
 - `memory/` - provisional project knowledge retained across sessions until it reaches a durable owner;
@@ -179,6 +179,16 @@ order: 100
 Use `contextkit guide authoring` for placement, naming, load modes, and quality rules.
 
 Use `contextkit guide global-context` before placing doctrine that should be inherited unchanged by multiple projects.
+
+## Agent Identity
+
+A project carries the identity a host application shows for it: an optional name, description, and icon image in the `[identity]` table of `.contextkit/config.toml`.
+
+```sh
+contextkit identity show --json
+```
+
+The resolved identity carries the name and whether it is the project folder-name default, the description, and the icon's absolute path. `contextkit identity set` and `contextkit identity clear` are the only writers, so a host application reads and writes identity through the CLI instead of editing ContextKit's files. Use `contextkit guide bootstrap` for the values and how doctor judges them.
 
 ## Project Memory
 
@@ -373,6 +383,7 @@ The current implementation covers the local, repo-backed agent body:
 - idempotent bootstrap for git init, binding and empty layer creation, hook install, build, doctor, and audit;
 - Codex and Claude context compilation;
 - optional recursive global-context compilation from `sources.global_context`;
+- agent identity in the binding config, resolved for host applications and written only through the CLI;
 - lazy provider-neutral project memory with capture, full-block rendering, search, status, import, and recursive inline compilation;
 - thin hook installation;
 - routine index inclusion from `routines/**/*.md` front matter;

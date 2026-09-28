@@ -57,3 +57,5 @@ contextkit audit
 ```
 
 Review the generated routine index. The description should be enough for the agent to decide when to load the routine.
+
+`contextkit routines --json` reads the same declared routines without side effects, for tools that need the list or its count.

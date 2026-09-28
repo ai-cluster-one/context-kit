@@ -37,6 +37,16 @@ ContextKit does not relocate an existing body. To adopt a body root later, set `
 
 Use `contextkit path <layer>` to resolve one layer, or `contextkit path` for the whole layout. Tools that need a body layer should ask that command instead of assuming a location.
 
+## Agent Identity
+
+A project carries the identity a host application shows for it: a display name, a one-line description, and an icon. The `[identity]` table in `.contextkit/config.toml` owns the values. The icon is a square PNG, 64 to 1024 pixels per side and at most 1 MiB, stored inside `.contextkit/` under a name ContextKit derives from the image content, so its path changes whenever the image does.
+
+All three are optional. The name falls back to the project folder name, so an unnamed project still presents a usable identity.
+
+`contextkit identity` is the only writer. It validates the values, copies a chosen image into the binding folder, records the reference, and only then removes the icon files it owns that the config no longer names, so a failed write leaves the previous icon in place. A host application reads the resolved identity and writes through that command rather than editing ContextKit's files.
+
+Doctor reports a configured icon whose file is missing. An absent name, description, or icon is healthy and is not a finding.
+
 ## Main Flow
 
 From the project root:

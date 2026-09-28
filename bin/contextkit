@@ -161,6 +161,18 @@ TEMPLATES_REL = Path("templates")
 GLOBAL_CONTEXT_TEMPLATE_REL = Path("global-context") / "GLOBAL-CONTEXT.md"
 MEMORY_DIR_ENV = "CONTEXTKIT_MEMORY_DIR"
 LEGACY_DOCTRINE_REL = Path("doctrine")
+# Agent identity a host application shows for this project. The values live in
+# the binding config; the icon is an image file beside it, under a name
+# ContextKit owns. `contextkit identity` is the only writer.
+IDENTITY_TABLE = ["identity"]
+IDENTITY_KEYS = ("name", "description", "icon")
+IDENTITY_LIMITS = {"name": 120, "description": 500}
+# The icon is a square PNG. Its stored name carries a content hash, so the
+# path a host application caches changes whenever the image does.
+IDENTITY_ICON_NAME = re.compile(r"icon-[0-9a-f]{12}\.png")
+MAX_IDENTITY_ICON_BYTES = 1024 * 1024
+IDENTITY_ICON_MIN_PX = 64
+IDENTITY_ICON_MAX_PX = 1024
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
@@ -1257,11 +1269,77 @@ def _parse_body_root(raw: dict[str, Any]) -> Path:
     return candidate
 
 
+def _png_dimensions(data: bytes) -> tuple[int, int] | None:
+    """Return the width and height of a PNG image, or None when `data` is not a PNG."""
+    if not data.startswith(b"\x89PNG\r\n\x1a\n") or data[12:16] != b"IHDR" or len(data) < 24:
+        return None
+    return int.from_bytes(data[16:20], "big"), int.from_bytes(data[20:24], "big")
+
+
+def _validated_identity_text(key: str, value: Any, owner: str, exit_code: int) -> str:
+    """Return the one-line identity value for `key`, or fail with the reason."""
+    limit = IDENTITY_LIMITS[key]
+    if not isinstance(value, str) or not value.strip():
+        _die(f"invalid {owner}: expected a non-empty string", exit_code)
+    if "\n" in value or "\r" in value:
+        _die(
+            f"invalid {owner}: expected one line\n"
+            "Agent identity holds a single-line name and description.",
+            exit_code,
+        )
+    text = value.strip()
+    if len(text) > limit:
+        _die(f"invalid {owner}: keep it within {limit} characters", exit_code)
+    return text
+
+
+def _validated_icon_reference(value: Any, owner: str, exit_code: int) -> str:
+    """Return the icon reference relative to the binding folder, or fail."""
+    binding = CONFIG_REL.parent.as_posix()
+    if not isinstance(value, str) or not value.strip():
+        _die(f"invalid {owner}: expected a non-empty path string", exit_code)
+    candidate = Path(value.strip())
+    if candidate.is_absolute() or ".." in candidate.parts:
+        _die(
+            f"invalid {owner}: {value}\n"
+            f"The icon is an image file inside {binding}/, named relative to it.",
+            exit_code,
+        )
+    if candidate.suffix.lower() != ".png":
+        _die(
+            f"invalid {owner}: {value}\n"
+            "The icon is a PNG image.",
+            exit_code,
+        )
+    return candidate.as_posix()
+
+
+def _parse_identity(raw: dict[str, Any]) -> dict[str, str | None]:
+    """Read the optional `[identity]` table a host application displays."""
+    section = raw.get("identity")
+    if section is None:
+        section = {}
+    if not isinstance(section, dict):
+        _die(
+            "invalid [identity]: expected a table of name, description, and icon\n"
+            "Use `contextkit identity set` to write agent identity.",
+            6,
+        )
+    identity: dict[str, str | None] = dict.fromkeys(IDENTITY_KEYS)
+    for key in ("name", "description"):
+        if section.get(key) is not None:
+            identity[key] = _validated_identity_text(key, section[key], f"identity.{key}", 6)
+    if section.get("icon") is not None:
+        identity["icon"] = _validated_icon_reference(section["icon"], "identity.icon", 6)
+    return identity
+
+
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
     raw_sources = dict((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
     global_context_raw = raw_sources.pop("global_context", None)
     body_root = _parse_body_root(raw)
+    identity = _parse_identity(raw)
     declared = dict(DEFAULT_SOURCES)
     declared.update(raw_sources)
     for name, rel in declared.items():
@@ -1342,6 +1420,7 @@ def _config(root: Path) -> dict[str, Any]:
     return {
         "version": raw.get("version", VERSION),
         "type": raw.get("type", "agent-project"),
+        "identity": identity,
         "body_root": body_root,
         "collaboration_mode": collaboration_mode,
         "sources": sources,
@@ -1551,10 +1630,11 @@ def _frontmatter_name_description(path: Path) -> tuple[str, str]:
     return fm.get("name", "").strip(), fm.get("description", "").strip()
 
 
-def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
+def _routine_entries(root: Path, routines_dir: Path, warnings: list[str]) -> list[tuple[str, str, Path]] | None:
+    """Collect declared routines as (name, description, relative path); None when the layer is absent."""
     if not (root / routines_dir).is_dir():
         warnings.append(f"routine layer not present; add `{routines_dir.as_posix()}/` or run `contextkit guide routines`")
-        return ""
+        return None
     routines: list[tuple[str, str, Path]] = []
     for path in sorted((root / routines_dir).rglob("*.md")):
         name, description = _frontmatter_name_description(path)
@@ -1568,6 +1648,13 @@ def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
         if name != path.stem:
             warnings.append(f"routine name `{name}` does not match filename stem `{path.stem}`: {rel.as_posix()}")
         routines.append((name, _one_line(description), rel))
+    return routines
+
+
+def _routine_index(root: Path, routines_dir: Path, warnings: list[str]) -> str:
+    routines = _routine_entries(root, routines_dir, warnings)
+    if routines is None:
+        return ""
     lines = [
         "# Routines (repeatable procedures)",
         "",
@@ -2074,14 +2161,18 @@ def _build_context(root: Path, hosts: list[str] | None = None) -> dict[str, Any]
     }
 
 
-def _atomic_write_text(path: Path, body: str) -> None:
+def _atomic_write_bytes(path: Path, body: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     mode = path.stat().st_mode if path.exists() else 0o644
-    with tempfile.NamedTemporaryFile("w", delete=False, dir=str(path.parent)) as tmp:
+    with tempfile.NamedTemporaryFile("wb", delete=False, dir=str(path.parent)) as tmp:
         tmp.write(body)
         tmp_path = Path(tmp.name)
     tmp_path.replace(path)
     path.chmod(mode)
+
+
+def _atomic_write_text(path: Path, body: str) -> None:
+    _atomic_write_bytes(path, body.encode("utf-8"))
 
 
 def _memory_entry_id(body: str) -> str:
@@ -2920,20 +3011,10 @@ def _toml_without(value: dict[str, Any], table: list[str], key: str) -> dict[str
     return copy
 
 
-def _toml_set_table_value(text: str, table: list[str], key: str, value: str) -> str | None:
-    """Set one string `key` in the `[table]` section of a TOML document.
-
-    The section is appended when absent. Returns None unless the result parses
-    and differs from the original only in that one value.
-    """
-    try:
-        before = tomllib.loads(text)
-    except tomllib.TOMLDecodeError:
-        return None
-    literal = f"{key} = {json.dumps(value, ensure_ascii=False)}"
-    lines = text.splitlines(keepends=True)
+def _toml_section_headers(lines: list[str]) -> list[tuple[int, list[str]]]:
+    """Map every `[table]` header line in a TOML document to its key path."""
     header_line = re.compile(r"^\s*\[(?!\[)(.*)\]\s*(#.*)?$")
-    headers: list[tuple[int, list[str] | None]] = []
+    headers: list[tuple[int, list[str]]] = []
     for index, line in enumerate(lines):
         match = header_line.match(line.rstrip("\n"))
         if not match:
@@ -2949,6 +3030,57 @@ def _toml_set_table_value(text: str, table: list[str], key: str, value: str) -> 
             path.append(name)
             node = node[name]
         headers.append((index, path))
+    return headers
+
+
+def _toml_remove_table_value(text: str, table: list[str], key: str) -> str | None:
+    """Remove one `key` from the `[table]` section of a TOML document.
+
+    The document is returned unchanged when the key is absent. Returns None
+    unless the result parses and differs from the original only in that key, so
+    a caller can refuse to rewrite instead of guessing through the file.
+    """
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    if _toml_lookup(before, table, key) is None:
+        return text
+    lines = text.splitlines(keepends=True)
+    headers = _toml_section_headers(lines)
+    section = next((index for index, path in headers if path == table), None)
+    if section is None:
+        return None
+    end = next((index for index, _path in headers if index > section), len(lines))
+    assignment = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    target = next((index for index in range(section + 1, end) if assignment.match(lines[index])), None)
+    if target is None:
+        return None
+    next_text = "".join(lines[:target] + lines[target + 1:])
+    try:
+        after = tomllib.loads(next_text)
+    except tomllib.TOMLDecodeError:
+        return None
+    if _toml_lookup(after, table, key) is not None:
+        return None
+    if _toml_without(after, table, key) != _toml_without(before, table, key):
+        return None
+    return next_text
+
+
+def _toml_set_table_value(text: str, table: list[str], key: str, value: str) -> str | None:
+    """Set one string `key` in the `[table]` section of a TOML document.
+
+    The section is appended when absent. Returns None unless the result parses
+    and differs from the original only in that one value.
+    """
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError:
+        return None
+    literal = f"{key} = {json.dumps(value, ensure_ascii=False)}"
+    lines = text.splitlines(keepends=True)
+    headers = _toml_section_headers(lines)
     section = next((index for index, path in headers if path == table), None)
     if section is None:
         header = ".".join(part if re.fullmatch(r"[A-Za-z0-9_-]+", part) else json.dumps(part, ensure_ascii=False) for part in table)
@@ -2957,11 +3089,18 @@ def _toml_set_table_value(text: str, table: list[str], key: str, value: str) -> 
     else:
         end = next((index for index, _path in headers if index > section), len(lines))
         assignment = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        any_assignment = re.compile(r"^\s*(?:[A-Za-z0-9_-]+|\"[^\"]*\"|'[^']*')\s*=")
         target = next((index for index in range(section + 1, end) if assignment.match(lines[index])), None)
-        if target is None:
-            lines.insert(section + 1, literal + "\n")
-        else:
+        if target is not None:
             lines[target] = literal + "\n"
+        else:
+            # A new key joins the last assignment in the section, so a written
+            # table keeps the order the keys were set in.
+            last = max(
+                (index for index in range(section + 1, end) if any_assignment.match(lines[index])),
+                default=section,
+            )
+            lines.insert(last + 1, literal + "\n")
         next_text = "".join(lines)
     try:
         after = tomllib.loads(next_text)
@@ -3860,6 +3999,7 @@ def cmd_session_start(args: argparse.Namespace) -> None:
 def _doctor_report(root: Path) -> dict[str, Any]:
     cfg = _config(root)
     sources = cfg["sources"]
+    identity = _identity_report(root, cfg)
     required_files = _required_project_files(root, sources)
     gitignore_guards = _guard_report(root, sources)
     legacy_dot_layers = _legacy_dot_layers(root, sources)
@@ -3892,6 +4032,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
     hosts = _installed_hosts(root)
     if hosts and not output.is_file():
         problems.append(f"generated context is missing: {output}; run `contextkit build`")
+    problems += identity["problems"]
     problems += _codex_delivery_problems(root)
     problems += _claude_delivery_problems(root)
     if cfg["legacy_targets"]:
@@ -3910,6 +4051,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "type": cfg["type"],
+        "identity": {key: identity[key] for key in ("name", "name_source", "description", "icon")},
         "body_root": cfg["body_root"].as_posix(),
         "ok": not problems,
         "problems": problems,
@@ -3935,6 +4077,238 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         },
     }
     return report
+
+
+def _identity_icon_path(root: Path, identity: dict[str, str | None]) -> Path | None:
+    reference = identity.get("icon")
+    if not reference:
+        return None
+    return root / CONFIG_REL.parent / reference
+
+
+def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the agent identity a host application shows for this project."""
+    identity = cfg["identity"]
+    configured_name = identity["name"]
+    icon_path = _identity_icon_path(root, identity)
+    icon: str | None = None
+    problems: list[str] = []
+    if icon_path is not None:
+        if icon_path.is_file():
+            icon = str(icon_path)
+        else:
+            problems.append(
+                f"configured identity icon is missing: {_rel(root, icon_path)}; "
+                "run `contextkit identity set --icon <file>` or `contextkit identity clear --icon`"
+            )
+    config = root / CONFIG_REL
+    return {
+        "project": str(root),
+        "config": str(config) if config.is_file() else None,
+        "name": configured_name or root.name,
+        "name_source": "config" if configured_name else "folder",
+        "description": identity["description"],
+        "icon": icon,
+        "problems": problems,
+    }
+
+
+def _format_identity(report: dict[str, Any]) -> str:
+    source = "configured" if report["name_source"] == "config" else "folder default"
+    icon = f"`{report['icon']}`" if report["icon"] else "not set"
+    lines = [
+        "# ContextKit Identity",
+        "",
+        f"Project: `{report['project']}`",
+        f"Name: `{report['name']}` ({source})",
+        f"Description: {report['description'] or 'not set'}",
+        f"Icon: {icon}",
+    ]
+    for key in ("changed", "unchanged", "removed"):
+        if key in report:
+            lines.append(f"{key.capitalize()}: {', '.join(report[key]) or 'none'}")
+    if report["problems"]:
+        lines += ["", "Problems:", *[f"- {problem}" for problem in report["problems"]]]
+    return "\n".join(lines) + "\n"
+
+
+def _emit_identity(root: Path, as_json: bool, outcome: dict[str, list[str]] | None = None) -> None:
+    report = _identity_report(root, _config(root))
+    if outcome is not None:
+        report.update(outcome)
+    if as_json:
+        _emit(report, True)
+        return
+    _emit(_format_identity(report))
+
+
+def _identity_config_path(root: Path) -> Path:
+    path = root / CONFIG_REL
+    if not path.is_file():
+        _die(
+            f"not a ContextKit project: {CONFIG_REL.as_posix()} is missing at {root}\n"
+            "Run `contextkit init` before writing agent identity.",
+            3,
+        )
+    return path
+
+
+def _write_identity_values(root: Path, updates: list[tuple[str, str | None]]) -> None:
+    """Apply `(key, value)` identity updates to the config, `None` clearing a key."""
+    if not updates:
+        return
+    path = _identity_config_path(root)
+    text = path.read_text()
+    for key, value in updates:
+        if value is None:
+            next_text = _toml_remove_table_value(text, IDENTITY_TABLE, key)
+        else:
+            next_text = _toml_set_table_value(text, IDENTITY_TABLE, key, value)
+        if next_text is None:
+            _die(
+                f"could not write identity.{key} in {_rel(root, path)}\n"
+                "Repair the config by hand, then run the command again.",
+                6,
+            )
+        text = next_text
+    _atomic_write_text(path, text)
+
+
+def _stage_identity_icon(root: Path, source: str) -> dict[str, Any]:
+    """Copy `source` into the binding folder under a content-addressed icon name."""
+    origin = Path(source).expanduser()
+    if not origin.is_file():
+        _die(f"icon file not found: {source}", 2)
+    size = origin.stat().st_size
+    if size == 0:
+        _die(f"icon file is empty: {source}", 2)
+    if size > MAX_IDENTITY_ICON_BYTES:
+        _die(f"icon file is larger than {MAX_IDENTITY_ICON_BYTES // 1024} KiB: {source}", 2)
+    data = origin.read_bytes()
+    dimensions = _png_dimensions(data)
+    if dimensions is None:
+        _die(f"unsupported icon format: {source}\nThe icon is a PNG image.", 2)
+    width, height = dimensions
+    if width != height or not IDENTITY_ICON_MIN_PX <= width <= IDENTITY_ICON_MAX_PX:
+        _die(
+            f"unsupported icon size {width}x{height}: {source}\n"
+            f"The icon is square, {IDENTITY_ICON_MIN_PX} to {IDENTITY_ICON_MAX_PX} pixels per side.",
+            2,
+        )
+    binding = _identity_config_path(root).parent
+    destination = binding / f"icon-{hashlib.sha256(data).hexdigest()[:12]}.png"
+    written = not destination.is_file()
+    if written:
+        _atomic_write_bytes(destination, data)
+    return {"reference": destination.name, "path": destination, "written": written}
+
+
+def _remove_owned_icons(root: Path, keep: str | None) -> list[str]:
+    """Remove the icon files ContextKit owns in the binding folder, except `keep`."""
+    removed: list[str] = []
+    binding = root / CONFIG_REL.parent
+    for path in sorted(binding.glob("icon-*.png")):
+        if path.name != keep and IDENTITY_ICON_NAME.fullmatch(path.name) and path.is_file():
+            path.unlink()
+            removed.append(_rel(root, path))
+    return removed
+
+
+def _explicit_project_root(args: argparse.Namespace) -> Path:
+    """Return the `--project` directory as given, or the project found from cwd."""
+    if getattr(args, "project", None) is None:
+        return _find_project_root()
+    root = Path(args.project).expanduser().resolve()
+    if not root.is_dir():
+        _die(f"project directory not found: {args.project}", 2)
+    return root
+
+
+def cmd_identity_show(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    _emit_identity(root, args.json)
+
+
+def cmd_identity_set(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    _identity_config_path(root)
+    current = _config(root)["identity"]
+    desired: dict[str, str] = {}
+    if args.name is not None:
+        desired["name"] = _validated_identity_text("name", args.name, "--name", 2)
+    if args.description is not None:
+        desired["description"] = _validated_identity_text("description", args.description, "--description", 2)
+    if not desired and args.icon is None:
+        _die("nothing to set: pass --name, --description, or --icon", 2)
+    staged: dict[str, Any] | None = None
+    if args.icon is not None:
+        staged = _stage_identity_icon(root, args.icon)
+        desired["icon"] = staged["reference"]
+    updates = [(key, value) for key, value in desired.items() if current.get(key) != value]
+    changed = [key for key, _value in updates]
+    try:
+        _write_identity_values(root, updates)
+    except BaseException:
+        # The config still names the previous icon; drop the one staged for it.
+        if staged is not None and staged["written"]:
+            staged["path"].unlink(missing_ok=True)
+        raise
+    removed = _remove_owned_icons(root, desired["icon"]) if staged is not None else []
+    _emit_identity(
+        root,
+        args.json,
+        {
+            "changed": [key for key in IDENTITY_KEYS if key in changed],
+            "unchanged": [key for key in IDENTITY_KEYS if key in desired and key not in changed],
+            "removed": removed,
+        },
+    )
+
+
+def cmd_identity_clear(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    _identity_config_path(root)
+    current = _config(root)["identity"]
+    requested = [key for key in IDENTITY_KEYS if getattr(args, key)]
+    if not requested:
+        _die("nothing to clear: pass --name, --description, or --icon", 2)
+    changed = [key for key in requested if current.get(key) is not None]
+    _write_identity_values(root, [(key, None) for key in changed])
+    # ContextKit removes only the icon files it owns inside the binding folder.
+    removed = _remove_owned_icons(root, None) if "icon" in requested else []
+    _emit_identity(
+        root,
+        args.json,
+        {
+            "changed": changed,
+            "unchanged": [key for key in requested if key not in changed],
+            "removed": removed,
+        },
+    )
+
+
+def cmd_routines(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    routines_dir = Path(_config(root)["sources"]["routines"])
+    warnings: list[str] = []
+    entries = _routine_entries(root, routines_dir, warnings) or []
+    report = {
+        "project": str(root),
+        "routines": [
+            {"name": name, "description": description, "path": str(root / rel)}
+            for name, description, rel in entries
+        ],
+        "count": len(entries),
+        "warnings": warnings,
+    }
+    if args.json:
+        _emit(report, True)
+        return
+    lines = ["# ContextKit Routines", "", f"Project: `{root}`", f"Count: {len(entries)}", ""]
+    lines += [f"- `{item['name']}` - {item['description']}" for item in report["routines"]]
+    if warnings:
+        lines += ["", "Warnings:", *[f"- {warning}" for warning in warnings]]
+    _emit("\n".join(lines).rstrip() + "\n")
 
 
 def cmd_path(args: argparse.Namespace) -> None:
@@ -3980,6 +4354,15 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "",
     ]
     lines += ["Rule sources:", *[f"- `{source}`" for source in report["rule_sources"]], ""]
+    identity = report["identity"]
+    lines += [
+        "Identity:",
+        f"- Name: `{identity['name']}` "
+        f"({'configured' if identity['name_source'] == 'config' else 'folder default'})",
+        f"- Description: {'set' if identity['description'] else 'not set'}",
+        f"- Icon: " + (f"`{identity['icon']}`" if identity["icon"] else "not set"),
+        "",
+    ]
     if report["problems"]:
         lines += ["Problems:", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
@@ -5370,6 +5753,10 @@ Commands:
   contextkit bootstrap [--target codex|claude] [--target ...] [--with-template] [--body-root DIR] [--no-trust] [--yes] [--json]
   contextkit doctor [--json]
   contextkit path [context|assets|routines|capabilities|memory] [--json]
+  contextkit identity show [--project DIR] [--json]
+  contextkit identity set [--name <text>] [--description <text>] [--icon <png>] [--project DIR] [--json]
+  contextkit identity clear [--name] [--description] [--icon] [--project DIR] [--json]
+  contextkit routines [--project DIR] [--json]
   contextkit init [--with-layers|--with-template] [--body-root DIR] [--json]
   contextkit adopt [--with-layers|--with-template] [--body-root DIR] [--json]
   contextkit global-context init <path> [--json]
@@ -5432,6 +5819,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("layer", nargs="?", help="context, assets, routines, capabilities, or memory")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_path)
+
+    p = sub.add_parser("identity", help="read and write the agent identity a host application shows")
+    identity_sub = p.add_subparsers(dest="identity_command", required=True)
+
+    identity = identity_sub.add_parser("show", help="resolve this project's agent name, description, and icon")
+    identity.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+    identity.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    identity.set_defaults(func=cmd_identity_show)
+
+    identity = identity_sub.add_parser("set", help="write the agent name, description, or icon")
+    identity.add_argument("--name", help="display name; the project folder name is the default")
+    identity.add_argument("--description", help="one-line description of this agent")
+    identity.add_argument("--icon", metavar="PNG",
+                          help="square PNG, 64-1024 px per side, at most 1 MiB, copied into the binding folder")
+    identity.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+    identity.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    identity.set_defaults(func=cmd_identity_set)
+
+    identity = identity_sub.add_parser("clear", help="remove the agent name, description, or icon")
+    identity.add_argument("--name", action="store_true", help="restore the project folder name")
+    identity.add_argument("--description", action="store_true", help="remove the description")
+    identity.add_argument("--icon", action="store_true",
+                          help="remove the icon reference and the icon file ContextKit owns")
+    identity.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+    identity.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    identity.set_defaults(func=cmd_identity_clear)
+
+    p = sub.add_parser("routines", help="list the routines this project declares, without side effects")
+    p.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+    p.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    p.set_defaults(func=cmd_routines)
 
     p = sub.add_parser("doctor")
     p.add_argument("--json", action="store_true")
