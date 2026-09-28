@@ -23,6 +23,8 @@ description: Specific one-line trigger and outcome.
 
 The filename stem equals `name`.
 
+An optional `title` gives the routine a display title for people and applications; without it the title is `name`. `contextkit routines set <name> --title <text>` and `contextkit routines clear <name> --title` write it. `name` and `description` stay authored in the file, because the agent routes by them.
+
 ## Body Contract
 
 Open with trigger, scope boundary, and definition of done.

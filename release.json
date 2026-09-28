@@ -1,6 +1,6 @@
 {
   "files": {
-    "bin/contextkit": "a57801a139791bdd6b3976df0e3c01fcd08df28f2dbac50be6333a24f1d542a0",
+    "bin/contextkit": "7ec0580be330e74f454d0cf282c372da9ace241efe3196a47b7595609e4b231e",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
@@ -15,7 +15,7 @@
     "guides/hooks.md": "125c1ed742942ebdedd251dfc4b510ffb6193a9332bca8ddfaa463bfad8e2fa7",
     "guides/memory.md": "5ab1be355ab82c9b6b9515afe1dbc7be4708a2cc9d3660c1907a144c7c64e6eb",
     "guides/migration.md": "c8357ad51b2d115cf9e6995be9f8a9490556ddcd25e9abdd927a145170b42fcc",
-    "guides/routines.md": "215e51f5c48e6d911f45c3a27b938614c53abb506d6cf55a1ce5257bf1e6a289",
+    "guides/routines.md": "87015e1177ac50b83688596032db814e0fb4a28404810599d6b833a1c3f1ed45",
     "guides/validation.md": "049876a593347240d7a37f94add53a1841a9c35a69f433beb4873e79b8838916",
     "guides/workbench.md": "619ed06120dfb10ab4a322fc8e92ca9835a7a55b80f87225e9183ea24265f13d",
     "templates/README.md": "f0dd6181e5c2419a50b82ad1ac0f230f7ab1e44e1ab97b92b04d6f92649044ad",
@@ -31,5 +31,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.4"
+  "version": "0.3.5"
 }

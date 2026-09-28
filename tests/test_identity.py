@@ -417,10 +417,66 @@ class RoutinesTests(unittest.TestCase):
         self.assertEqual(report["count"], 1)
         self.assertEqual(
             report["routines"],
-            [{"name": "weekly-review", "description": "Review the week.", "path": str(routines / "weekly-review.md")}],
+            [{
+                "name": "weekly-review",
+                "title": "weekly-review",
+                "title_source": "name",
+                "description": "Review the week.",
+                "path": str(routines / "weekly-review.md"),
+            }],
         )
         self.assertEqual(report["warnings"], ["routine missing frontmatter name: routines/broken.md"])
         self.assertEqual(self.snapshot(), before)
+
+    def test_set_and_clear_a_routine_title(self) -> None:
+        path = self.project / "routines" / "weekly-review.md"
+        body = "\n# Weekly Review\n\nSteps stay exactly as written.\n"
+        path.write_text("---\nname: weekly-review\ndescription: Review the week.\n---\n" + body)
+
+        result = self.run_cli("routines", "set", "weekly-review", "--title", 'Weekly "review": Fridays', "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        written = json.loads(result.stdout)
+        self.assertEqual(written["changed"], ["title"])
+        self.assertEqual(written["routine"]["title"], 'Weekly "review": Fridays')
+        self.assertEqual(written["routine"]["title_source"], "front_matter")
+        self.assertEqual(written["routine"]["description"], "Review the week.")
+        text = path.read_text()
+        self.assertTrue(text.startswith('---\nname: weekly-review\ntitle: "Weekly \\"review\\": Fridays"\n'))
+        self.assertTrue(text.endswith("---\n" + body))
+
+        listed = json.loads(self.run_cli("routines", "--json").stdout)["routines"][0]
+        self.assertEqual(listed["title"], 'Weekly "review": Fridays')
+
+        again = json.loads(self.run_cli("routines", "set", "weekly-review", "--title", 'Weekly "review": Fridays', "--json").stdout)
+        self.assertEqual(again["changed"], [])
+
+        elsewhere = self.root / "elsewhere"
+        elsewhere.mkdir()
+        cleared = self.run_cli("routines", "--project", str(self.project), "clear", "weekly-review", "--title", "--json", cwd=elsewhere)
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertEqual(json.loads(cleared.stdout)["routine"]["title_source"], "name")
+        self.assertEqual(path.read_text(), "---\nname: weekly-review\ndescription: Review the week.\n---\n" + body)
+
+        built = self.run_cli("build")
+        self.assertEqual(built.returncode, 0, built.stderr)
+
+    def test_routine_title_writes_are_validated(self) -> None:
+        (self.project / "routines" / "weekly-review.md").write_text(
+            "---\nname: weekly-review\ndescription: Review the week.\n---\n"
+        )
+        for args, code, reason in (
+            (("set", "absent", "--title", "X"), 3, "routine not found: absent"),
+            (("set", "weekly-review", "--title", "two\nlines"), 2, "expected one line"),
+            (("set", "weekly-review", "--title", "a\u2028b"), 2, "U+2028"),
+            (("set", "weekly-review", "--title", "x" * 121), 2, "within 120 characters"),
+            (("set", "weekly-review"), 2, "nothing to set: pass --title"),
+            (("clear", "weekly-review"), 2, "nothing to clear: pass --title"),
+        ):
+            rejected = self.run_cli("routines", *args)
+            self.assertEqual(rejected.returncode, code, f"{args} {rejected.stdout}")
+            self.assertIn(reason, rejected.stderr)
+        help_result = self.run_cli("help")
+        self.assertIn("contextkit routines set <name> --title <text>", help_result.stdout)
 
     def test_routines_without_a_layer_counts_zero(self) -> None:
         (self.project / "routines").rmdir()
