@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1291,6 +1292,17 @@ def _validated_identity_text(key: str, value: Any, owner: str, exit_code: int) -
     if len(text) > limit:
         _die(f"invalid {owner}: keep it within {limit} characters", exit_code)
     return text
+
+
+def _reject_identity_control_characters(value: str, owner: str) -> None:
+    """Refuse control characters and line or paragraph separators in written identity text."""
+    for char in value:
+        if unicodedata.category(char) in {"Cc", "Zl", "Zp"}:
+            _die(
+                f"invalid {owner}: contains control or line-separator character U+{ord(char):04X}\n"
+                "Agent identity holds a single-line name and description.",
+                2,
+            )
 
 
 def _validated_icon_reference(value: Any, owner: str, exit_code: int) -> str:
@@ -3011,6 +3023,11 @@ def _toml_without(value: dict[str, Any], table: list[str], key: str) -> dict[str
     return copy
 
 
+def _toml_lines(text: str) -> list[str]:
+    """Split a TOML document into lines, keeping ends; only LF ends a TOML line."""
+    return re.findall(r"[^\n]*\n|[^\n]+\Z", text)
+
+
 def _toml_section_headers(lines: list[str]) -> list[tuple[int, list[str]]]:
     """Map every `[table]` header line in a TOML document to its key path."""
     header_line = re.compile(r"^\s*\[(?!\[)(.*)\]\s*(#.*)?$")
@@ -3046,7 +3063,7 @@ def _toml_remove_table_value(text: str, table: list[str], key: str) -> str | Non
         return None
     if _toml_lookup(before, table, key) is None:
         return text
-    lines = text.splitlines(keepends=True)
+    lines = _toml_lines(text)
     headers = _toml_section_headers(lines)
     section = next((index for index, path in headers if path == table), None)
     if section is None:
@@ -3079,7 +3096,7 @@ def _toml_set_table_value(text: str, table: list[str], key: str, value: str) -> 
     except tomllib.TOMLDecodeError:
         return None
     literal = f"{key} = {json.dumps(value, ensure_ascii=False)}"
-    lines = text.splitlines(keepends=True)
+    lines = _toml_lines(text)
     headers = _toml_section_headers(lines)
     section = next((index for index, path in headers if path == table), None)
     if section is None:
@@ -4236,8 +4253,10 @@ def cmd_identity_set(args: argparse.Namespace) -> None:
     desired: dict[str, str] = {}
     if args.name is not None:
         desired["name"] = _validated_identity_text("name", args.name, "--name", 2)
+        _reject_identity_control_characters(args.name, "--name")
     if args.description is not None:
         desired["description"] = _validated_identity_text("description", args.description, "--description", 2)
+        _reject_identity_control_characters(args.description, "--description")
     if not desired and args.icon is None:
         _die("nothing to set: pass --name, --description, or --icon", 2)
     staged: dict[str, Any] | None = None

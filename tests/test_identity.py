@@ -231,6 +231,27 @@ class IdentityTests(unittest.TestCase):
             self.assertIn(reason, rejected.stderr)
         self.assertNotIn("identity", self.config())
 
+    def test_set_rejects_control_and_separator_characters(self) -> None:
+        for value, code in (("sep\u2028x", "U+2028"), ("sep\u2029x", "U+2029"), ("a\x01b", "U+0001"), ("a\tb", "U+0009")):
+            for flag in ("--name", "--description"):
+                rejected = self.run_cli("identity", "set", flag, value)
+                self.assertEqual(rejected.returncode, 2, rejected.stdout)
+                self.assertIn(f"contains control or line-separator character {code}", rejected.stderr)
+        self.assertNotIn("identity", self.config())
+
+    def test_a_config_holding_a_line_separator_stays_writable(self) -> None:
+        config = self.project / ".contextkit" / "config.toml"
+        config.write_text(config.read_text() + '\n[identity]\nname = "sep\\u2028x"\ndescription = "kept"\n')
+        self.assertEqual(self.identity("show")["name"], "sep\u2028x")
+
+        renamed = self.identity("set", "--name", "Fixed")
+        self.assertEqual(renamed["name"], "Fixed")
+        config.write_text(config.read_text().replace('name = "Fixed"', 'name = "sep\u2028x"'))
+        cleared = self.identity("clear", "--name")
+        self.assertEqual(cleared["changed"], ["name"])
+        self.assertEqual(cleared["name_source"], "folder")
+        self.assertEqual(self.config()["identity"], {"description": "kept"})
+
     def test_a_field_is_required(self) -> None:
         for command in ("set", "clear"):
             empty = self.run_cli("identity", command)

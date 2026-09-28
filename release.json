@@ -1,6 +1,6 @@
 {
   "files": {
-    "bin/contextkit": "40295a00d61e49b840bd1ff6536fdd03fc2956027f09a2d0713b912c9fe350b5",
+    "bin/contextkit": "a57801a139791bdd6b3976df0e3c01fcd08df28f2dbac50be6333a24f1d542a0",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
@@ -31,5 +31,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.3"
+  "version": "0.3.4"
 }
