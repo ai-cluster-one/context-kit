@@ -12,6 +12,7 @@ import ipaddress
 import json
 import os
 import re
+import secrets
 import shutil
 import stat
 import subprocess
@@ -167,6 +168,10 @@ LEGACY_DOCTRINE_REL = Path("doctrine")
 # ContextKit owns. `contextkit identity` is the only writer.
 IDENTITY_TABLE = ["identity"]
 IDENTITY_KEYS = ("name", "description", "icon")
+# The project id is assigned once and never changed. New ids are `prj_` plus 12
+# hex; an id adopted from a capabilities envelope may also be a UUID.
+IDENTITY_ID = re.compile(r"prj_[0-9a-f]{12}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+CAPABILITIES_PROJECT_FILE = "project.json"
 IDENTITY_LIMITS = {"name": 120, "description": 500}
 ROUTINE_TITLE_LIMIT = 120
 # The icon is a square PNG. Its stored name carries a content hash, so the
@@ -1342,7 +1347,15 @@ def _parse_identity(raw: dict[str, Any]) -> dict[str, str | None]:
             "Use `contextkit identity set` to write agent identity.",
             6,
         )
-    identity: dict[str, str | None] = dict.fromkeys(IDENTITY_KEYS)
+    identity: dict[str, str | None] = dict.fromkeys(("id", *IDENTITY_KEYS))
+    if section.get("id") is not None:
+        if not isinstance(section["id"], str) or not IDENTITY_ID.fullmatch(section["id"]):
+            _die(
+                f"invalid identity.id: {section['id']}\n"
+                "The project id is `prj_` plus 12 lowercase hex, or a UUID adopted from a capabilities envelope. It never changes once assigned.",
+                6,
+            )
+        identity["id"] = section["id"]
     for key in ("name", "description"):
         if section.get(key) is not None:
             identity[key] = _validated_identity_text(key, section[key], f"identity.{key}", 6)
@@ -2565,6 +2578,8 @@ def _init_project(root: Path, with_layers: bool = False, with_template: bool = F
             "Edit `body.root` in the config and move the body layers yourself; ContextKit does not relocate an existing body.",
             6,
         )
+    if _assign_project_id(root)["changed"] and config_existed:
+        changed.append(CONFIG_REL.as_posix())
     sources = cfg["sources"]
     _write_if_missing(root / README_REL, _binding_readme(sources), created, skipped)
     _ensure_gitignore(root, created, changed)
@@ -4086,7 +4101,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         "project": str(root),
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "type": cfg["type"],
-        "identity": {key: identity[key] for key in ("name", "name_source", "description", "icon")},
+        "identity": {key: identity[key] for key in ("id", "name", "name_source", "description", "icon")},
         "body_root": cfg["body_root"].as_posix(),
         "ok": not problems,
         "problems": problems,
@@ -4137,9 +4152,12 @@ def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
                 "run `contextkit identity set --icon <file>` or `contextkit identity clear --icon`"
             )
     config = root / CONFIG_REL
+    if config.is_file() and identity["id"] is None:
+        problems.append("project id is not assigned; run `contextkit identity adopt`")
     return {
         "project": str(root),
         "config": str(config) if config.is_file() else None,
+        "id": identity["id"],
         "name": configured_name or root.name,
         "name_source": "config" if configured_name else "folder",
         "description": identity["description"],
@@ -4155,6 +4173,7 @@ def _format_identity(report: dict[str, Any]) -> str:
         "# ContextKit Identity",
         "",
         f"Project: `{report['project']}`",
+        f"Id: `{report['id']}`" if report["id"] else "Id: not assigned",
         f"Name: `{report['name']}` ({source})",
         f"Description: {report['description'] or 'not set'}",
         f"Icon: {icon}",
@@ -4257,6 +4276,58 @@ def _explicit_project_root(args: argparse.Namespace) -> Path:
     if not root.is_dir():
         _die(f"project directory not found: {args.project}", 2)
     return root
+
+
+def _envelope_project_id(root: Path, cfg: dict[str, Any]) -> str | None:
+    """Read the id a capabilities envelope already carries, so records filed under it stay attached.
+
+    This reads the one envelope ContextKit resolves for the project and never
+    writes it. It bridges ids the capabilities manager issued before ContextKit
+    owned the project id.
+    """
+    path = root / cfg["sources"]["capabilities"] / CAPABILITIES_PROJECT_FILE
+    if not path.is_file():
+        return None
+    try:
+        value = json.loads(path.read_text()).get("id")
+    except (OSError, ValueError, AttributeError):
+        value = None
+    if not isinstance(value, str) or not IDENTITY_ID.fullmatch(value):
+        _die(
+            f"cannot adopt the project id from {_rel(root, path)}: expected an `id` of `prj_` plus 12 hex or a UUID\n"
+            "Records may already be filed under that envelope's id, so ContextKit does not replace it with a new one. "
+            "Repair the envelope with its owner, the capabilities manager, then run `contextkit identity adopt` again.",
+            6,
+        )
+    return value
+
+
+def _assign_project_id(root: Path) -> dict[str, Any]:
+    """Give the project its id once: adopt the envelope's id when there is one, otherwise generate one."""
+    cfg = _config(root)
+    current = cfg["identity"]["id"]
+    if current is not None:
+        return {"id": current, "id_source": "config", "changed": False}
+    adopted = _envelope_project_id(root, cfg)
+    project_id = adopted or f"prj_{secrets.token_hex(6)}"
+    _write_identity_values(root, [("id", project_id)])
+    return {"id": project_id, "id_source": "capabilities" if adopted else "generated", "changed": True}
+
+
+def cmd_identity_adopt(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    _identity_config_path(root)
+    assigned = _assign_project_id(root)
+    _emit_identity(
+        root,
+        args.json,
+        {
+            "changed": ["id"] if assigned["changed"] else [],
+            "unchanged": [] if assigned["changed"] else ["id"],
+            "removed": [],
+            "id_source": assigned["id_source"],
+        },
+    )
 
 
 def cmd_identity_show(args: argparse.Namespace) -> None:
@@ -5874,6 +5945,7 @@ Commands:
   contextkit identity show [--project DIR] [--json]
   contextkit identity set [--name <text>] [--description <text>] [--icon <png>] [--project DIR] [--json]
   contextkit identity clear [--name] [--description] [--icon] [--project DIR] [--json]
+  contextkit identity adopt [--project DIR] [--json]
   contextkit routines [--project DIR] [--json]
   contextkit routines set <name> --title <text> [--project DIR] [--json]
   contextkit routines clear <name> --title [--project DIR] [--json]
@@ -5956,6 +6028,11 @@ def build_parser() -> argparse.ArgumentParser:
     identity.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
     identity.add_argument("--json", action="store_true", help="emit a machine-readable result")
     identity.set_defaults(func=cmd_identity_set)
+
+    identity = identity_sub.add_parser("adopt", help="assign the project id once, adopting the capabilities envelope's id when present")
+    identity.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+    identity.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    identity.set_defaults(func=cmd_identity_adopt)
 
     identity = identity_sub.add_parser("clear", help="remove the agent name, description, or icon")
     identity.add_argument("--name", action="store_true", help="restore the project folder name")

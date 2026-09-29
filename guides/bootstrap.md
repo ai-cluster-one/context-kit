@@ -43,9 +43,11 @@ A project carries the identity a host application shows for it: a display name, 
 
 All three are optional. The name falls back to the project folder name, so an unnamed project still presents a usable identity.
 
+The identity also holds the project id, `identity.id`: the one id other tools, such as the capabilities manager and task stores, take for this project. `init`, `adopt`, and `bootstrap` assign it once, and `contextkit identity adopt` assigns it to a project that has none. Assignment adopts the id from the capabilities envelope ContextKit resolves for the project when that envelope already carries one, so records filed under it stay attached; it only reads the envelope. Otherwise ContextKit generates `prj_` plus 12 hex. No command changes or clears an assigned id.
+
 `contextkit identity` is the only writer. It validates the values, copies a chosen image into the binding folder, records the reference, and only then removes the icon files it owns that the config no longer names, so a failed write leaves the previous icon in place. A host application reads the resolved identity and writes through that command rather than editing ContextKit's files.
 
-Doctor reports a configured icon whose file is missing. An absent name, description, or icon is healthy and is not a finding.
+Doctor reports a project without an id and a configured icon whose file is missing. An absent name, description, or icon is healthy and is not a finding.
 
 ## Main Flow
 

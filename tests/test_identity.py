@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import tempfile
@@ -64,6 +65,10 @@ class IdentityTests(unittest.TestCase):
     def config(self) -> dict:
         return tomllib.loads((self.project / ".contextkit" / "config.toml").read_text())
 
+    def display_identity(self) -> dict:
+        """The identity table without the project id `init` assigns."""
+        return {key: value for key, value in self.config().get("identity", {}).items() if key != "id"}
+
     def icon_file(self, name: str = "cropped.png", body: bytes | None = None) -> Path:
         path = self.root / name
         path.write_bytes(body if body is not None else png_bytes())
@@ -78,7 +83,7 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(report["problems"], [])
         self.assertEqual(report["project"], str(self.project))
         self.assertEqual(report["config"], str(self.project / ".contextkit" / "config.toml"))
-        self.assertNotIn("identity", self.config())
+        self.assertEqual(self.display_identity(), {})
 
     def test_show_outside_a_contextkit_project_reports_no_config(self) -> None:
         loose = self.root / "loose-agent"
@@ -175,7 +180,7 @@ class IdentityTests(unittest.TestCase):
         brand.parent.mkdir(parents=True)
         brand.write_bytes(png_bytes())
         config = self.project / ".contextkit" / "config.toml"
-        config.write_text(config.read_text() + '\n[identity]\nicon = "brand/logo.png"\n')
+        config.write_text(config.read_text() + 'icon = "brand/logo.png"\n')
         self.assertEqual(self.identity("show")["icon"], str(brand))
 
         cleared = self.identity("clear", "--icon")
@@ -216,7 +221,7 @@ class IdentityTests(unittest.TestCase):
         rejected_empty = self.run_cli("identity", "set", "--icon", str(empty))
         self.assertEqual(rejected_empty.returncode, 2, rejected_empty.stdout)
         self.assertIn("icon file is empty", rejected_empty.stderr)
-        self.assertNotIn("identity", self.config())
+        self.assertEqual(self.display_identity(), {})
 
     def test_set_rejects_empty_and_multi_line_values(self) -> None:
         for args, reason in (
@@ -229,7 +234,7 @@ class IdentityTests(unittest.TestCase):
             rejected = self.run_cli("identity", "set", *args)
             self.assertEqual(rejected.returncode, 2, rejected.stdout)
             self.assertIn(reason, rejected.stderr)
-        self.assertNotIn("identity", self.config())
+        self.assertEqual(self.display_identity(), {})
 
     def test_set_rejects_control_and_separator_characters(self) -> None:
         for value, code in (("sep\u2028x", "U+2028"), ("sep\u2029x", "U+2029"), ("a\x01b", "U+0001"), ("a\tb", "U+0009")):
@@ -237,11 +242,11 @@ class IdentityTests(unittest.TestCase):
                 rejected = self.run_cli("identity", "set", flag, value)
                 self.assertEqual(rejected.returncode, 2, rejected.stdout)
                 self.assertIn(f"contains control or line-separator character {code}", rejected.stderr)
-        self.assertNotIn("identity", self.config())
+        self.assertEqual(self.display_identity(), {})
 
     def test_a_config_holding_a_line_separator_stays_writable(self) -> None:
         config = self.project / ".contextkit" / "config.toml"
-        config.write_text(config.read_text() + '\n[identity]\nname = "sep\\u2028x"\ndescription = "kept"\n')
+        config.write_text(config.read_text() + 'name = "sep\\u2028x"\ndescription = "kept"\n')
         self.assertEqual(self.identity("show")["name"], "sep\u2028x")
 
         renamed = self.identity("set", "--name", "Fixed")
@@ -250,7 +255,7 @@ class IdentityTests(unittest.TestCase):
         cleared = self.identity("clear", "--name")
         self.assertEqual(cleared["changed"], ["name"])
         self.assertEqual(cleared["name_source"], "folder")
-        self.assertEqual(self.config()["identity"], {"description": "kept"})
+        self.assertEqual(self.display_identity(), {"description": "kept"})
 
     def test_a_field_is_required(self) -> None:
         for command in ("set", "clear"):
@@ -279,6 +284,8 @@ class IdentityTests(unittest.TestCase):
             self.assertEqual(written.returncode, 0, written.stderr)
 
         parsed = tomllib.loads(config.read_text())
+        project_id = parsed["identity"].pop("id")
+        self.assertRegex(project_id, r"^prj_[0-9a-f]{12}$")
         self.assertEqual(parsed["body"]["root"], "agent")
         self.assertEqual(parsed["output"]["context"], ".contextkit/generated/context.md")
         self.assertEqual(parsed["version"], 1)
@@ -292,7 +299,7 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(cleared.returncode, 0, cleared.stderr)
         after = tomllib.loads(config.read_text())
         self.assertEqual(after["body"]["root"], "agent")
-        self.assertEqual(after.get("identity", {}), {})
+        self.assertEqual(after["identity"], {"id": project_id})
         self.assertIn("# Optional shared doctrine outside this project:", config.read_text())
         self.assertTrue(before.startswith("version = 1"))
 
@@ -301,11 +308,12 @@ class IdentityTests(unittest.TestCase):
         original = config.read_text()
         # A bare `identity` key is a top-level value, so it precedes every table.
         for body, reason in (
-            (original + '\n[identity]\nname = 5\n', "invalid identity.name"),
-            (original + '\n[identity]\ndescription = """two\nlines"""\n', "invalid identity.description"),
-            (original + '\n[identity]\nicon = "../outside.png"\n', "invalid identity.icon"),
-            (original + '\n[identity]\nicon = "logo.txt"\n', "The icon is a PNG image."),
-            ('identity = "AgentKit"\n' + original, "invalid [identity]"),
+            (original + 'name = 5\n', "invalid identity.name"),
+            (original + 'description = """two\nlines"""\n', "invalid identity.description"),
+            (original + 'icon = "../outside.png"\n', "invalid identity.icon"),
+            (original + 'icon = "logo.txt"\n', "The icon is a PNG image."),
+            ('identity = "AgentKit"\n' + original.split("\n[identity]\n")[0] + "\n", "invalid [identity]"),
+            (re.sub(r'(?m)^id = ".*"$', 'id = "project-7"', original), "invalid identity.id"),
         ):
             config.write_text(body)
             for command in (("identity", "show"), ("build",), ("doctor",)):
@@ -322,6 +330,7 @@ class IdentityTests(unittest.TestCase):
         self.assertEqual(
             report["identity"],
             {
+                "id": self.config()["identity"]["id"],
                 "name": "Agent One",
                 "name_source": "config",
                 "description": None,
@@ -375,6 +384,101 @@ class IdentityTests(unittest.TestCase):
         missing = self.run_cli("identity", "show", "--project", str(self.root / "absent"))
         self.assertEqual(missing.returncode, 2, missing.stdout)
         self.assertIn("project directory not found", missing.stderr)
+
+
+class ProjectIdTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.project = Path(self.temp.name).resolve() / "my-agent"
+        self.project.mkdir()
+
+    def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(CONTEXTKIT), *args],
+            cwd=str(self.project),
+            env=dict(os.environ),
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+    def json_cli(self, *args: str) -> dict:
+        result = self.run_cli(*args, "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def config_text(self) -> str:
+        return (self.project / ".contextkit" / "config.toml").read_text()
+
+    def envelope(self, project_id: str, layer: str = "capabilities") -> Path:
+        path = self.project / layer / "project.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"id": project_id, "schema": "capabilities.project.v1", "slug": "my-agent"}) + "\n")
+        return path
+
+    def test_init_assigns_a_stable_id(self) -> None:
+        self.json_cli("init")
+        shown = self.json_cli("identity", "show")
+        self.assertRegex(shown["id"], r"^prj_[0-9a-f]{12}$")
+        self.assertEqual(shown["problems"], [])
+        self.assertEqual(self.json_cli("doctor")["identity"]["id"], shown["id"])
+
+        self.json_cli("init")
+        self.assertEqual(self.json_cli("identity", "show")["id"], shown["id"])
+        adopted = self.json_cli("identity", "adopt")
+        self.assertEqual(adopted["changed"], [])
+        self.assertEqual(adopted["unchanged"], ["id"])
+        self.assertEqual(adopted["id"], shown["id"])
+
+        self.json_cli("identity", "set", "--name", "Agent One")
+        self.json_cli("identity", "clear", "--name", "--description", "--icon")
+        self.assertEqual(self.json_cli("identity", "show")["id"], shown["id"])
+        refused = self.run_cli("identity", "set", "--id", "prj_000000000000")
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+
+    def test_init_adopts_the_envelope_id_through_the_body_root(self) -> None:
+        envelope = self.envelope("prj_031f2dfab24e", layer="agent/capabilities")
+        before = envelope.read_bytes()
+        self.json_cli("init", "--body-root", "agent")
+        self.assertEqual(self.json_cli("identity", "show")["id"], "prj_031f2dfab24e")
+        self.assertEqual(envelope.read_bytes(), before)
+
+    def test_adopt_takes_an_existing_envelope_id_including_a_uuid(self) -> None:
+        self.json_cli("init")
+        config = self.project / ".contextkit" / "config.toml"
+        config.write_text(re.sub(r'(?m)^id = ".*"\n', "", self.config_text()))
+        missing = self.json_cli("identity", "show")
+        self.assertIsNone(missing["id"])
+        self.assertEqual(missing["problems"], ["project id is not assigned; run `contextkit identity adopt`"])
+        self.assertFalse(self.json_cli("doctor")["ok"])
+
+        uuid = "351bae2a-e256-4181-a9f7-2b292d198066"
+        self.envelope(uuid)
+        adopted = self.json_cli("identity", "adopt")
+        self.assertEqual(adopted["changed"], ["id"])
+        self.assertEqual(adopted["id_source"], "capabilities")
+        self.assertEqual(adopted["id"], uuid)
+        self.assertEqual(adopted["problems"], [])
+
+    def test_adopt_refuses_an_unreadable_envelope_id(self) -> None:
+        self.json_cli("init")
+        config = self.project / ".contextkit" / "config.toml"
+        config.write_text(re.sub(r'(?m)^id = ".*"\n', "", self.config_text()))
+        before = self.config_text()
+        self.envelope("not-an-id")
+        refused = self.run_cli("identity", "adopt")
+        self.assertEqual(refused.returncode, 6, refused.stdout)
+        self.assertIn("cannot adopt the project id from capabilities/project.json", refused.stderr)
+        self.assertEqual(self.config_text(), before)
+
+    def test_a_folder_without_contextkit_has_no_id(self) -> None:
+        shown = self.json_cli("identity", "show")
+        self.assertIsNone(shown["id"])
+        self.assertIsNone(shown["config"])
+        self.assertEqual(shown["problems"], [])
+        refused = self.run_cli("identity", "adopt")
+        self.assertEqual(refused.returncode, 3, refused.stdout)
 
 
 class RoutinesTests(unittest.TestCase):

@@ -1,13 +1,13 @@
 {
   "files": {
-    "bin/contextkit": "7ec0580be330e74f454d0cf282c372da9ace241efe3196a47b7595609e4b231e",
+    "bin/contextkit": "50758cb30b20b19ba2086a15a68d770068cb26d98c712815403b4c6003894d34",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "fe42a20746bd9358882c9663e0d5baea8f8721e7d5f2e64103f63264380f04f1",
-    "guides/bootstrap.md": "427709d9cea96880700f216fee6a011b746aaf2544e43ef8a93f33e56207802a",
+    "guides/bootstrap.md": "a9237d14406c3227c9ae2de65756da4360092b08d63c4a4f6e1fb99b257b69fd",
     "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
@@ -31,5 +31,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.5"
+  "version": "0.3.6"
 }

@@ -182,13 +182,13 @@ Use `contextkit guide global-context` before placing doctrine that should be inh
 
 ## Agent Identity
 
-A project carries the identity a host application shows for it: an optional name, description, and icon image in the `[identity]` table of `.contextkit/config.toml`.
+A project carries its identity in the `[identity]` table of `.contextkit/config.toml`: the project id other tools take for it, assigned once and never changed, and the optional name, description, and icon image a host application shows.
 
 ```sh
 contextkit identity show --json
 ```
 
-The resolved identity carries the name and whether it is the project folder-name default, the description, and the icon's absolute path. `contextkit identity set` and `contextkit identity clear` are the only writers, so a host application reads and writes identity through the CLI instead of editing ContextKit's files. Use `contextkit guide bootstrap` for the values and how doctor judges them.
+The resolved identity carries the project id, the name and whether it is the project folder-name default, the description, and the icon's absolute path. `contextkit identity set` and `contextkit identity clear` are the only writers, so a host application reads and writes identity through the CLI instead of editing ContextKit's files. Use `contextkit guide bootstrap` for the values and how doctor judges them.
 
 ## Project Memory
 
