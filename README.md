@@ -17,6 +17,7 @@ Use ContextKit when multiple agents, hosts, or sessions need the same source of 
 - on-demand guides for authoring, global context, memory, validation, audits, semantic grooming, routines, assets, migration, hooks, and destructive operations;
 - isolated workbench sessions for reviewing a project's agent body without adopting its worker identity;
 - starter files for project onboarding and user-level global context;
+- agent templates that create a ready agent in one step, with its capabilities enabled and a tracked onboarding;
 - advisory audits that point to the rule source for each finding;
 - generated runtime context rebuilt from source, never edited by hand.
 
@@ -124,7 +125,7 @@ ContextKit separates the sources it ships:
 - `THESIS.md` - the worldview of ContextKit.
 - `bundle/` - shipped always-on runtime block.
 - `guides/` - shipped on-demand operating and authoring guides.
-- `templates/` - project-body starters for onboarding and a separate global-context source starter.
+- `templates/` - project-body starters for onboarding, agent templates under `templates/agents/`, and a separate global-context source starter.
 - `bin/` - the executable manager and command contracts.
 - `install.sh` - the installer for the manager, runtime, guides, and templates.
 
@@ -189,6 +190,17 @@ contextkit identity show --json
 ```
 
 The resolved identity carries the project id, the name and whether it is the project folder-name default, the description, and the icon's absolute path. `contextkit identity set` and `contextkit identity clear` are the only writers, so a host application reads and writes identity through the CLI instead of editing ContextKit's files. Use `contextkit guide bootstrap` for the values and how doctor judges them.
+
+## Agent Templates
+
+ContextKit ships agent templates: ready agents with an identity, a starter body, the capabilities they need, and an onboarding. List them, then create an agent from one in an empty folder:
+
+```sh
+contextkit templates --json
+contextkit init --template personal-agent
+```
+
+The command initialises Git as `bootstrap` does, creates the binding, the layers, and the template's files, sets the identity from the template with a name picked from its list, enables the template's capabilities for the project through the capabilities manager, installs the Codex and Claude bindings, and builds generated context. While onboarding is pending, generated context tells the agent to run its onboarding routine before other work; the routine ends with `contextkit onboarding complete`. Use `contextkit guide bootstrap` for the template format and the onboarding state.
 
 ## Project Memory
 
@@ -340,10 +352,23 @@ Read the destructive-operations guide:
 contextkit guide destructive
 ```
 
-List starter templates:
+List starter templates and agent templates:
 
 ```sh
 contextkit templates
+```
+
+Create an agent from an agent template in an empty folder:
+
+```sh
+contextkit init --template personal-agent
+```
+
+Read or close the onboarding of an agent created from a template:
+
+```sh
+contextkit onboarding status
+contextkit onboarding complete
 ```
 
 Command outputs point to rule-source guides. Load the named guide, edit source files, then rerun the command.
@@ -391,7 +416,8 @@ The current implementation covers the local, repo-backed agent body:
 - advisory audit reports with `--write` persistence under `.contextkit/audits/`;
 - agent-driven semantic grooming without persistent groom state;
 - generated guide menu and on-demand guides loaded from ContextKit source/install;
-- project-body template gallery for onboarding and a separate global-context source starter.
+- project-body template gallery for onboarding and a separate global-context source starter;
+- agent templates with one-step creation and a tracked onboarding state.
 
 Legacy dot-folder projects are migration inputs, not runtime defaults. Rename `.context`, `.assets`, `.routines`, and `.capabilities` to their visible forms before building with ContextKit.
 

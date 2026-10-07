@@ -1,13 +1,13 @@
 {
   "files": {
-    "bin/contextkit": "50758cb30b20b19ba2086a15a68d770068cb26d98c712815403b4c6003894d34",
+    "bin/contextkit": "48884abdaaf7ea815e1720e4a4378172426aab57b79508f5d7cf502a60a655e8",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "fe42a20746bd9358882c9663e0d5baea8f8721e7d5f2e64103f63264380f04f1",
-    "guides/bootstrap.md": "a9237d14406c3227c9ae2de65756da4360092b08d63c4a4f6e1fb99b257b69fd",
+    "guides/bootstrap.md": "2b5ad5e0a8462c72bef4912e8a248750dbb0259d07038c3077337bbc1125c132",
     "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
@@ -18,7 +18,19 @@
     "guides/routines.md": "87015e1177ac50b83688596032db814e0fb4a28404810599d6b833a1c3f1ed45",
     "guides/validation.md": "049876a593347240d7a37f94add53a1841a9c35a69f433beb4873e79b8838916",
     "guides/workbench.md": "619ed06120dfb10ab4a322fc8e92ca9835a7a55b80f87225e9183ea24265f13d",
-    "templates/README.md": "f0dd6181e5c2419a50b82ad1ac0f230f7ab1e44e1ab97b92b04d6f92649044ad",
+    "templates/README.md": "c0e856918f7f05cea7211ef8f9f0f9a810fc849421075eaf9dd666b835c44dbc",
+    "templates/agents/personal-agent/context/guidelines/COMMS.md": "6303d5fc604bb9e8c9bc80daf0b0a78ab806ef96458de99ea4faba8602d7aa50",
+    "templates/agents/personal-agent/context/guidelines/CONDUCT.md": "b0e677eefc6c4a4631998ad24f7f3711eddeb548e25d8df52c299673ff6a0eee",
+    "templates/agents/personal-agent/context/guidelines/LIMITATIONS.md": "0332b1864355a8bb064748e8489599c3a87a61bda4ac24b3df6163e8d3eb9fde",
+    "templates/agents/personal-agent/context/identity/AGENT.md": "a3166c9b7e6d55bdef4c1d962f44b4215a688661d0cad239cdd2ed9bf589458a",
+    "templates/agents/personal-agent/context/identity/MISSION.md": "38e57247b5391efa4824d1ce462ea962cfb292bcf5621c43f5f9030744243e4c",
+    "templates/agents/personal-agent/context/identity/OWNER.md": "19eb59ba9ab76741238bcd8d71caebb7a5cc5fdf9c9d12a8565771f5638b2f91",
+    "templates/agents/personal-agent/context/identity/PEOPLE.md": "fec30f6eda10d8c6dc56ed6375c144c15788510e85b6a36ae7454b3bb8a15270",
+    "templates/agents/personal-agent/context/projects/PROJECTS.md": "554ca8ebf5edbc47955ff43549dded06ded765c994d3a3902cb2000d98fbb0e4",
+    "templates/agents/personal-agent/icon.png": "5011cd933756f750581c20df8e5a3a4495f74be84d0e96d5365e1fb20e020f59",
+    "templates/agents/personal-agent/routines/daily-brief.md": "2eee5fa6470e82980dd9f8e78c69283602ecb771a871d5a916a3ca373c950306",
+    "templates/agents/personal-agent/routines/onboarding.md": "0374004f2b4b0d5f82dfaf3523bfb4c9bae5be7f165d98694635c23d94ef01bd",
+    "templates/agents/personal-agent/template.toml": "da5ba978badf80fe76413d5a4eedb39800860ff3ce23192fd18e1a91244527da",
     "templates/context/architecture/RUNTIME.md": "dc3f6e7a032f484a245710bd1f35aebf689fdc78fc5fb7a2fa3db1506a515416",
     "templates/context/architecture/SERVICES.md": "a3b1aa08fd30b1660db34d0a5af9a83dba60d822bf0497bbe4bdfcb26f3db49d",
     "templates/context/guidelines/ASSETS.md": "f6461866802bfd223415b84e7663ff9f474896b672459f2f5ff1e34a02287a09",
@@ -31,5 +43,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.6"
+  "version": "0.3.7"
 }

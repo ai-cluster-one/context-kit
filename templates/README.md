@@ -6,4 +6,4 @@ They are gallery items, not doctrine for the ContextKit repository itself. A pro
 
 The manager reads `context/` when listing project templates or creating project starter files with template-enabled init, adopt, or bootstrap flows.
 
-`context/` contains the project-body starter set used by `--with-template`. `global-context/` contains the separate global-context source starter used only by `contextkit global-context init`; it is never copied into a project by the project-template flows.
+`context/` contains the project-body starter set used by `--with-template`. `agents/` contains the agent templates that `contextkit init --template <id>` creates a ready agent from; `contextkit guide bootstrap` owns their format. `global-context/` contains the separate global-context source starter used only by `contextkit global-context init`; it is never copied into a project by the project-template flows.

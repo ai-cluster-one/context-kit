@@ -161,6 +161,17 @@ COLLABORATION_MODES = ("ask", "direct")
 GUIDES_REL = Path("guides")
 TEMPLATES_REL = Path("templates")
 GLOBAL_CONTEXT_TEMPLATE_REL = Path("global-context") / "GLOBAL-CONTEXT.md"
+AGENT_TEMPLATES_REL = Path("agents")
+AGENT_TEMPLATE_MANIFEST = "template.toml"
+# Body layers an agent template may carry; each lands where the project's config places it.
+AGENT_TEMPLATE_LAYERS = ("context", "assets", "routines")
+AGENT_TEMPLATE_ID = re.compile(r"[a-z0-9][a-z0-9-]*")
+CAPABILITY_NAME = re.compile(r"[a-z][a-z0-9-]*")
+ROUTINE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
+# Entries that leave a folder empty for a new agent, as for bootstrap: a Finder marker and a repository.
+EMPTY_FOLDER_IGNORED = (".DS_Store", ".git")
+ONBOARDING_TABLE = ["onboarding"]
+ONBOARDING_STATES = ("pending", "complete")
 MEMORY_DIR_ENV = "CONTEXTKIT_MEMORY_DIR"
 LEGACY_DOCTRINE_REL = Path("doctrine")
 # Agent identity a host application shows for this project. The values live in
@@ -1170,6 +1181,91 @@ def _global_context_template() -> Path:
     return source
 
 
+def _agent_template_dirs() -> dict[str, Path]:
+    """Return the shipped agent templates by id: each folder under templates/agents/ holding a manifest."""
+    base = _template_root() / AGENT_TEMPLATES_REL
+    if not base.is_dir():
+        return {}
+    return {
+        path.name: path
+        for path in sorted(base.iterdir())
+        if path.is_dir() and (path / AGENT_TEMPLATE_MANIFEST).is_file()
+    }
+
+
+def _agent_template(path: Path) -> dict[str, Any]:
+    """Read and validate one agent template: its manifest and the body files beside it."""
+    manifest = path / AGENT_TEMPLATE_MANIFEST
+    owner = f"agent template {_one_line(str(manifest))}"
+    route = "Use `contextkit guide bootstrap` for the agent template format."
+
+    def invalid(detail: str) -> None:
+        _die(f"invalid {owner}: {detail}\n{route}", 6)
+
+    raw = _load_toml(manifest)
+    template_id = raw.get("id")
+    if not isinstance(template_id, str) or not AGENT_TEMPLATE_ID.fullmatch(template_id) or template_id != path.name:
+        invalid("`id` must be lowercase letters, digits, and hyphens, and equal the template folder name")
+    name = _validated_single_line(raw.get("name"), f"{owner}: name", IDENTITY_LIMITS["name"], 6)
+    description = _validated_identity_text("description", raw.get("description"), f"{owner}: description", 6)
+    icon_rel = raw.get("icon")
+    if not isinstance(icon_rel, str) or Path(icon_rel).is_absolute() or ".." in Path(icon_rel).parts \
+            or Path(icon_rel).suffix.lower() != ".png" or not (path / icon_rel).is_file():
+        invalid("`icon` must name a PNG file inside the template folder")
+    capabilities = raw.get("capabilities", [])
+    if not isinstance(capabilities, list) or not all(isinstance(item, str) and CAPABILITY_NAME.fullmatch(item) for item in capabilities) \
+            or len(set(capabilities)) != len(capabilities):
+        invalid("`capabilities` must be a list of distinct capability names")
+    agent_names = raw.get("agent_names")
+    if not isinstance(agent_names, list) or not agent_names:
+        invalid("`agent_names` must be a non-empty list of names")
+    agent_names = [_validated_identity_text("name", item, f"{owner}: agent_names", 6) for item in agent_names]
+
+    files: list[str] = []
+    for file in sorted(path.rglob("*")):
+        rel = file.relative_to(path)
+        if not file.is_file() or any(part.startswith(".") for part in rel.parts):
+            continue
+        if rel.as_posix() in {AGENT_TEMPLATE_MANIFEST, Path(icon_rel).as_posix()}:
+            continue
+        if len(rel.parts) < 2 or rel.parts[0] not in AGENT_TEMPLATE_LAYERS:
+            invalid(f"`{rel.as_posix()}` is outside the body layers a template carries ({', '.join(AGENT_TEMPLATE_LAYERS)})")
+        files.append(rel.as_posix())
+
+    routines: list[dict[str, str]] = []
+    for rel in files:
+        if not rel.startswith("routines/") or not rel.endswith(".md"):
+            continue
+        routine_name, routine_description = _frontmatter_name_description(path / rel)
+        if routine_name != Path(rel).stem or not routine_description:
+            invalid(f"routine `{rel}` needs front matter `name` equal to its file stem and a `description`")
+        title = _routine_title(path / rel)
+        routines.append({"name": routine_name, "title": title or routine_name, "description": _one_line(routine_description)})
+
+    onboarding = raw.get("onboarding")
+    if onboarding is not None:
+        routine = onboarding.get("routine") if isinstance(onboarding, dict) else None
+        if routine not in {item["name"] for item in routines}:
+            invalid("`[onboarding] routine` must name a routine the template carries")
+        onboarding = {"routine": routine}
+    return {
+        "id": template_id,
+        "name": name,
+        "description": description,
+        "icon": str(path / icon_rel),
+        "capabilities": capabilities,
+        "routines": routines,
+        "onboarding": onboarding,
+        "agent_names": agent_names,
+        "path": str(path),
+        "files": files,
+    }
+
+
+def _agent_templates() -> list[dict[str, Any]]:
+    return [_agent_template(path) for path in _agent_template_dirs().values()]
+
+
 def _run(args: list[str], root: Path, env: dict[str, str] | None = None,
          timeout: int = 30) -> subprocess.CompletedProcess[str]:
     merged_env = dict(os.environ)
@@ -1364,12 +1460,30 @@ def _parse_identity(raw: dict[str, Any]) -> dict[str, str | None]:
     return identity
 
 
+def _parse_onboarding(raw: dict[str, Any]) -> dict[str, str] | None:
+    """Read the optional `[onboarding]` table an agent created from a template carries."""
+    section = raw.get("onboarding")
+    if section is None:
+        return None
+    route = "Use `contextkit onboarding status` and `contextkit guide bootstrap` for the onboarding state."
+    if not isinstance(section, dict):
+        _die(f"invalid [onboarding]: expected a table of status and routine\n{route}", 6)
+    status = section.get("status")
+    if status not in ONBOARDING_STATES:
+        _die(f"invalid onboarding.status: {status}\nExpected one of: {', '.join(ONBOARDING_STATES)}. {route}", 6)
+    routine = section.get("routine")
+    if not isinstance(routine, str) or not ROUTINE_NAME.fullmatch(routine):
+        _die(f"invalid onboarding.routine: {routine}\nExpected the name of a routine in this project. {route}", 6)
+    return {"status": status, "routine": routine}
+
+
 def _config(root: Path) -> dict[str, Any]:
     raw = _load_toml(root / CONFIG_REL)
     raw_sources = dict((raw.get("sources") or {}) if isinstance(raw.get("sources"), dict) else {})
     global_context_raw = raw_sources.pop("global_context", None)
     body_root = _parse_body_root(raw)
     identity = _parse_identity(raw)
+    onboarding = _parse_onboarding(raw)
     declared = dict(DEFAULT_SOURCES)
     declared.update(raw_sources)
     for name, rel in declared.items():
@@ -1451,6 +1565,7 @@ def _config(root: Path) -> dict[str, Any]:
         "version": raw.get("version", VERSION),
         "type": raw.get("type", "agent-project"),
         "identity": identity,
+        "onboarding": onboarding,
         "body_root": body_root,
         "collaboration_mode": collaboration_mode,
         "sources": sources,
@@ -2037,6 +2152,8 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
     routine_index = _routine_index(root, routines_dir, warnings)
     capability_context = _capability_context(root, capabilities_dir, warnings)
     memory_block, _memory_files = _render_memory_block(root)
+    onboarding = cfg["onboarding"]
+    onboarding_block = _onboarding_block(root, cfg, warnings) if onboarding and onboarding["status"] == "pending" else ""
 
     out: list[str] = ["# Project Context", "", _generated_block().strip(), ""]
     if warnings:
@@ -2067,6 +2184,8 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
         "---",
         "",
     ]
+    if onboarding_block:
+        out += [onboarding_block, "", "---", ""]
     update = _available_update()
     if update:
         out += [_update_notice_block(update), "", "---", ""]
@@ -2601,13 +2720,191 @@ def _init_project(root: Path, with_layers: bool = False, with_template: bool = F
     }
 
 
-def cmd_init(args: argparse.Namespace) -> None:
+def _manager_message(proc: subprocess.CompletedProcess[str]) -> str:
+    """Return the error a capabilities manager command reported, from its JSON or its text."""
+    for stream in (proc.stdout, proc.stderr):
+        with contextlib.suppress(ValueError, AttributeError):
+            message = json.loads(stream)["error"]["message"]
+            if isinstance(message, str) and message.strip():
+                return _one_line(message)
+    return _one_line(proc.stderr or proc.stdout)[:300] or f"exited {proc.returncode}"
+
+
+def _enable_template_capabilities(root: Path, names: list[str]) -> list[dict[str, Any]]:
+    """Enable each capability for this project through the capabilities manager, then confirm it took effect.
+
+    The manager is the sole writer of capability policy. A capability counts as
+    enabled only when the manager's own listing reports it effective for this
+    project afterwards, so a capability that is missing or quarantined on this
+    machine is reported as failed rather than as a written but inert record.
+    """
+    if not names:
+        return []
+    manager = _capabilities_manager()
+    if not manager:
+        detail = f"capabilities manager is not on PATH; install it or set {CAPABILITIES_MANAGER_ENV}"
+        return [{"name": name, "result": "failed", "effective": None, "detail": detail} for name in names]
+    cfg = _config(root)
+    # Hand the resolved envelope and id over, as the context build does, so the
+    # manager answers for this project without calling back into ContextKit.
+    env = {
+        CAPABILITIES_ENVELOPE_ENV: str(root / cfg["sources"]["capabilities"]),
+        f"{CAPABILITIES_ENVELOPE_ENV}_ROOT": str(root),
+        "CAPABILITIES_PROJECT_ID": cfg["identity"]["id"] or "",
+        "CAPABILITIES_PROJECT_ID_ROOT": str(root),
+    }
+    errors: dict[str, str] = {}
+    for name in names:
+        try:
+            proc = _run([manager, "enable", name, "--project", "--json"], root, env=env, timeout=60)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            errors[name] = f"manager could not run: {_one_line(str(exc))}"
+            continue
+        if proc.returncode != 0:
+            errors[name] = _manager_message(proc)
+    rows: dict[str, dict[str, Any]] = {}
+    listing_error: str | None = None
+    try:
+        proc = _run([manager, "list", "--json"], root, env=env, timeout=60)
+        if proc.returncode != 0:
+            listing_error = _manager_message(proc)
+        else:
+            installed = json.loads(proc.stdout).get("installed", [])
+            rows = {row["name"]: row for row in installed if isinstance(row, dict) and isinstance(row.get("name"), str)}
+    except (OSError, subprocess.TimeoutExpired, ValueError, AttributeError) as exc:
+        listing_error = _one_line(str(exc))
+    results: list[dict[str, Any]] = []
+    for name in names:
+        row = rows.get(name)
+        effective = row.get("effective") if row else None
+        if name in errors:
+            detail = errors[name]
+        elif listing_error is not None:
+            detail = f"could not confirm through `capabilities list`: {listing_error}"
+        elif row is None:
+            detail = f"not installed on this machine; install it with `capabilities install {name}`"
+        elif effective != "enabled":
+            detail = f"policy written, but the capability is {effective} here (decided by {row.get('source')})"
+            if row.get("machine") == "quarantined":
+                detail += f"; it is quarantined on this machine until the user allows it with `capabilities allow {name}`"
+        else:
+            detail = None
+        results.append({
+            "name": name,
+            "result": "failed" if detail else "enabled",
+            "effective": effective,
+            "detail": detail,
+        })
+    return results
+
+
+def _init_from_template(root: Path, template_id: str, body_root: str | None, trust: bool) -> dict[str, Any]:
+    """Create a new agent in the empty folder `root` from one shipped agent template."""
+    templates = _agent_template_dirs()
+    if template_id not in templates:
+        _die(
+            f"unknown agent template: {template_id}\n"
+            f"Available: {', '.join(templates) or 'none'}. Run `contextkit templates` to see them.",
+            2,
+        )
+    template = _agent_template(templates[template_id])
+    present = sorted(entry.name for entry in root.iterdir() if entry.name not in EMPTY_FOLDER_IGNORED)
+    if present:
+        shown = ", ".join(present[:5]) + (", ..." if len(present) > 5 else "")
+        _die(
+            f"`init --template` creates a new agent and needs an empty folder; {root} holds: {shown}\n"
+            "Nothing was changed. Choose an empty folder, or use `contextkit bootstrap` to bind an existing project.",
+            6,
+        )
+    if body_root is not None:
+        _parse_body_root({"body": {"root": body_root}})
+
+    # The folder is empty, so this is bootstrap's git step: a repository with the body left ready to commit.
+    git = _prepare_git_for_bootstrap(root, yes=True)
+    init = _init_project(root, with_layers=True, body_root=body_root)
+    sources = _config(root)["sources"]
+    base = Path(template["path"])
+    for rel in template["files"]:
+        layer, *rest = Path(rel).parts
+        destination = root / sources[layer] / Path(*rest)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes((base / rel).read_bytes())
+        init["created"].append(str(destination))
+
+    staged = _stage_identity_icon(root, template["icon"])
+    init["created"].append(str(staged["path"]))
+    name = secrets.choice(template["agent_names"])
+    _write_identity_values(root, [("name", name), ("description", template["description"]), ("icon", staged["reference"])])
+    if template["onboarding"]:
+        _write_config_values(root, ONBOARDING_TABLE, [("status", "pending"), ("routine", template["onboarding"]["routine"])])
+
+    capabilities = _enable_template_capabilities(root, template["capabilities"])
+    # A Claude or Codex session in the new agent's folder loads its context only through these bindings.
+    hooks = _install_hooks(root, ["codex", "claude"], trust=trust)
+    build = _build_context(root)
+    failed = [item["name"] for item in capabilities if item["result"] != "enabled"]
+    return {
+        **init,
+        "template": template_id,
+        "ok": not failed,
+        "git": git,
+        "identity": {key: value for key, value in _identity_report(root, _config(root)).items() if key != "problems"},
+        "onboarding": _onboarding_report(root, _config(root)),
+        "capabilities": capabilities,
+        "hooks": hooks,
+        "build": build,
+    }
+
+
+def _format_template_init(result: dict[str, Any]) -> str:
+    identity = result["identity"]
+    onboarding = result["onboarding"]
+    lines = [
+        "# ContextKit Agent From Template",
+        "",
+        f"Project: `{result['project']}`",
+        f"Template: `{result['template']}`",
+        f"Status: {'ready' if result['ok'] else 'needs attention'}",
+        "",
+        f"Git: {'initialized' if result['git']['initialized'] else 'present'}",
+        f"Identity: `{identity['name']}` (`{identity['id']}`)",
+        f"Files: {len(result['created'])} created",
+        f"Hooks: {', '.join(host for host in ('codex', 'claude') if host in result['hooks'])}",
+        f"Generated context: `{result['build']['output']}`",
+        f"Onboarding: {onboarding['status']}" + (f" (routine `{onboarding['routine']}`)" if onboarding["routine"] else ""),
+        "",
+        "Capabilities enabled for this project:",
+    ]
+    if not result["capabilities"]:
+        lines.append("- none")
+    for item in result["capabilities"]:
+        suffix = f" - {item['detail']}" if item["detail"] else ""
+        lines.append(f"- {item['name']}: {item['result']}{suffix}")
+    return "\n".join(lines) + "\n"
+
+
+def cmd_init(args: argparse.Namespace) -> int | None:
     root = _find_project_root() if args.adopt else Path.cwd().resolve()
     with_layers = bool(getattr(args, "with_layers", False))
     with_template = bool(getattr(args, "with_template", False))
     binding_only = bool(getattr(args, "binding_only", False))
-    if binding_only and (with_layers or with_template):
-        _die("`--binding-only` is the default and cannot be combined with `--with-layers` or `--with-template`.", 2)
+    template = getattr(args, "template", None)
+    if binding_only and (with_layers or with_template or template):
+        _die("`--binding-only` is the default and cannot be combined with `--with-layers`, `--with-template`, or `--template`.", 2)
+    if getattr(args, "no_trust", False) and not template:
+        _die("`--no-trust` applies only to `init --template`, which installs host bindings.", 2)
+    if template:
+        result = _init_from_template(root, template, getattr(args, "body_root", None), trust=not args.no_trust)
+        _emit(result, True) if args.json else _emit(_format_template_init(result))
+        failed = [item for item in result["capabilities"] if item["result"] != "enabled"]
+        if failed:
+            sys.stderr.write(
+                "The agent body is in place, but these capabilities are not enabled for it:\n"
+                + "".join(f"- {item['name']}: {item['detail']}\n" for item in failed)
+                + "Repair them with the capabilities manager, then run `contextkit build`.\n"
+            )
+            return 1
+        return 0
     _emit(
         _init_project(
             root,
@@ -4090,6 +4387,12 @@ def _doctor_report(root: Path) -> dict[str, Any]:
             f"{CONFIG_REL.as_posix()} has `[targets]` tables, which ContextKit does not read; "
             "remove them and set `[output] context` only to move the generated context"
         )
+    onboarding = _onboarding_report(root, cfg)
+    if onboarding["status"] == "pending" and onboarding["routine_path"] is None:
+        problems.append(
+            f"onboarding is pending but its routine `{onboarding['routine']}` is not declared in "
+            f"`{sources['routines']}/`; restore the routine or run `contextkit onboarding complete`"
+        )
     if global_context and not global_context["present"]:
         problems.append(f"missing global context source: {global_context['path']}")
     elif global_context and not global_context["directory"]:
@@ -4102,6 +4405,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         "config": str(root / CONFIG_REL) if (root / CONFIG_REL).exists() else None,
         "type": cfg["type"],
         "identity": {key: identity[key] for key in ("id", "name", "name_source", "description", "icon")},
+        "onboarding": {key: onboarding[key] for key in ("status", "routine", "routine_path")},
         "body_root": cfg["body_root"].as_posix(),
         "ok": not problems,
         "problems": problems,
@@ -4209,18 +4513,23 @@ def _identity_config_path(root: Path) -> Path:
 
 def _write_identity_values(root: Path, updates: list[tuple[str, str | None]]) -> None:
     """Apply `(key, value)` identity updates to the config, `None` clearing a key."""
+    _write_config_values(root, IDENTITY_TABLE, updates)
+
+
+def _write_config_values(root: Path, table: list[str], updates: list[tuple[str, str | None]]) -> None:
+    """Apply `(key, value)` updates to one config table, `None` clearing a key."""
     if not updates:
         return
     path = _identity_config_path(root)
     text = path.read_text()
     for key, value in updates:
         if value is None:
-            next_text = _toml_remove_table_value(text, IDENTITY_TABLE, key)
+            next_text = _toml_remove_table_value(text, table, key)
         else:
-            next_text = _toml_set_table_value(text, IDENTITY_TABLE, key, value)
+            next_text = _toml_set_table_value(text, table, key, value)
         if next_text is None:
             _die(
-                f"could not write identity.{key} in {_rel(root, path)}\n"
+                f"could not write {'.'.join(table)}.{key} in {_rel(root, path)}\n"
                 "Repair the config by hand, then run the command again.",
                 6,
             )
@@ -4395,6 +4704,80 @@ def cmd_identity_clear(args: argparse.Namespace) -> None:
     )
 
 
+def _onboarding_routine_path(root: Path, cfg: dict[str, Any]) -> Path | None:
+    """Return the project-relative path of the routine onboarding names, or None when it is absent."""
+    onboarding = cfg["onboarding"]
+    if onboarding is None:
+        return None
+    entries = _routine_entries(root, Path(cfg["sources"]["routines"]), []) or []
+    return next((rel for name, _description, rel, _title in entries if name == onboarding["routine"]), None)
+
+
+def _onboarding_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the onboarding state: `none` when the project tracks no onboarding."""
+    onboarding = cfg["onboarding"]
+    path = _onboarding_routine_path(root, cfg)
+    return {
+        "project": str(root),
+        "status": onboarding["status"] if onboarding else "none",
+        "routine": onboarding["routine"] if onboarding else None,
+        "routine_path": str(root / path) if path else None,
+    }
+
+
+def _onboarding_block(root: Path, cfg: dict[str, Any], warnings: list[str]) -> str:
+    routine = cfg["onboarding"]["routine"]
+    path = _onboarding_routine_path(root, cfg)
+    if path is None:
+        warnings.append(f"onboarding routine `{routine}` is not declared in `{cfg['sources']['routines']}/`")
+        reference = f"`{routine}`"
+    else:
+        reference = f"[{routine}]({path.as_posix()})"
+    return "\n".join([
+        "# Onboarding",
+        "",
+        f"This agent's onboarding is pending. Finish it before other work: run the routine {reference} and carry it to its end. "
+        "At the start of each session, tell the owner what onboarding still needs. "
+        "When the owner asks for other work first, say that onboarding is unfinished, then follow the owner's choice.",
+        "",
+        "The routine checks what remains from the live state and ends with `contextkit onboarding complete`, which removes this block.",
+    ])
+
+
+def cmd_onboarding_status(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    report = _onboarding_report(root, _config(root))
+    if args.json:
+        _emit(report, True)
+        return
+    lines = ["# ContextKit Onboarding", "", f"Project: `{root}`", f"Status: {report['status']}"]
+    if report["routine"]:
+        lines.append(f"Routine: `{report['routine']}`" + (f" (`{report['routine_path']}`)" if report["routine_path"] else " (not declared)"))
+    _emit("\n".join(lines) + "\n")
+
+
+def cmd_onboarding_complete(args: argparse.Namespace) -> None:
+    root = _explicit_project_root(args)
+    _identity_config_path(root)
+    cfg = _config(root)
+    if cfg["onboarding"] is None:
+        _die(
+            f"no onboarding is tracked in {CONFIG_REL.as_posix()} at {root}\n"
+            "Only an agent created with `contextkit init --template` carries an onboarding.",
+            3,
+        )
+    changed = cfg["onboarding"]["status"] != "complete"
+    if changed:
+        _write_config_values(root, ONBOARDING_TABLE, [("status", "complete")])
+    build = _build_context(root)
+    report = {**_onboarding_report(root, _config(root)), "changed": changed, "generated_context": build["output"],
+              "warnings": build["warnings"]}
+    if args.json:
+        _emit(report, True)
+        return
+    _emit(f"Onboarding: complete ({'changed' if changed else 'unchanged'}); generated context rebuilt at `{build['output']}`\n")
+
+
 def _routine_item(root: Path, entry: tuple[str, str, Path, str]) -> dict[str, Any]:
     name, description, rel, title = entry
     return {
@@ -4552,6 +4935,16 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         f"- Icon: " + (f"`{identity['icon']}`" if identity["icon"] else "not set"),
         "",
     ]
+    onboarding = report["onboarding"]
+    if onboarding["status"] == "pending":
+        lines += [
+            "Onboarding:",
+            f"- Pending: the agent runs routine `{onboarding['routine']}` before other work; "
+            "`contextkit onboarding complete` closes it. This is information, not a problem.",
+            "",
+        ]
+    elif onboarding["status"] == "complete":
+        lines += ["Onboarding:", "- Complete", ""]
     if report["problems"]:
         lines += ["Problems:", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
@@ -5907,15 +6300,34 @@ def cmd_guide(args: argparse.Namespace) -> None:
     _emit(_read_guide(f"{topic}.md"))
 
 
-def cmd_templates(_: argparse.Namespace) -> None:
+def _agent_template_listing(template: dict[str, Any]) -> dict[str, Any]:
+    return {key: template[key] for key in (
+        "id", "name", "description", "icon", "capabilities", "routines", "onboarding", "agent_names", "path",
+    )}
+
+
+def cmd_templates(args: argparse.Namespace) -> None:
     template_root = _template_root()
+    files = _template_files()
+    agents = _agent_templates()
+    if getattr(args, "json", False):
+        starter = []
+        for path in files:
+            fm, _body = _parse_frontmatter(path.read_text())
+            starter.append({
+                "path": path.relative_to(template_root).as_posix(),
+                "title": fm.get("title", path.stem),
+                "description": fm.get("description", "").strip(),
+            })
+        _emit({"source": str(template_root), "starter": starter,
+               "agents": [_agent_template_listing(item) for item in agents]}, True)
+        return
     lines = [
         "# ContextKit Templates",
         "",
         "Starter context gallery. Copy or adapt templates that fit the project; `--with-template` creates the current starter set.",
         "",
     ]
-    files = _template_files()
     if not files:
         lines.append("No context templates are available.")
     for path in files:
@@ -5929,6 +6341,15 @@ def cmd_templates(_: argparse.Namespace) -> None:
         "",
         "Run `contextkit init --with-template` to create missing binding, layers, and starter context files.",
         "Run `contextkit global-context init <path>` to create the separate global-context starter.",
+    ]
+    lines += ["", "Agent templates:", ""]
+    if not agents:
+        lines.append("No agent templates are available.")
+    for item in agents:
+        lines.append(f"- `{item['id']}` - {item['name']} - {item['description']}")
+    lines += [
+        "",
+        "Run `contextkit init --template <id>` in an empty folder to create an agent from an agent template.",
     ]
     _emit("\n".join(lines) + "\n")
 
@@ -5949,7 +6370,10 @@ Commands:
   contextkit routines [--project DIR] [--json]
   contextkit routines set <name> --title <text> [--project DIR] [--json]
   contextkit routines clear <name> --title [--project DIR] [--json]
+  contextkit onboarding status [--project DIR] [--json]
+  contextkit onboarding complete [--project DIR] [--json]
   contextkit init [--with-layers|--with-template] [--body-root DIR] [--json]
+  contextkit init --template <id> [--body-root DIR] [--no-trust] [--json]
   contextkit adopt [--with-layers|--with-template] [--body-root DIR] [--json]
   contextkit global-context init <path> [--json]
   contextkit install-hooks --target codex|claude [--target ...] [--no-trust] [--json]
@@ -5968,7 +6392,7 @@ Commands:
   contextkit migrate --plan|--apply
   contextkit workbench [<task>|--stdin] [--write] [--timeout <seconds>] [--json] [--keep]
   contextkit guide [bootstrap|authoring|agent-team|workbench|global-context|memory|validation|assets|routines|audit|groom|destructive|migration|hooks|capabilities]
-  contextkit templates
+  contextkit templates [--json]
 
 Environment:
   CONTEXTKIT_HOME        installed product root; defaults to ~/.contextkit
@@ -6061,6 +6485,17 @@ def build_parser() -> argparse.ArgumentParser:
         routine.add_argument("--json", action="store_true", default=argparse.SUPPRESS,
                              help="emit a machine-readable result")
 
+    p = sub.add_parser("onboarding", help="read or close the onboarding of an agent created from a template")
+    onboarding_sub = p.add_subparsers(dest="onboarding_command", required=True)
+    for command, handler, help_text in (
+        ("status", cmd_onboarding_status, "report whether onboarding is pending, complete, or not tracked"),
+        ("complete", cmd_onboarding_complete, "mark onboarding complete and rebuild the generated context"),
+    ):
+        onboarding = onboarding_sub.add_parser(command, help=help_text)
+        onboarding.add_argument("--project", metavar="DIR", help="project root; defaults to the project found from the working directory")
+        onboarding.add_argument("--json", action="store_true", help="emit a machine-readable result")
+        onboarding.set_defaults(func=handler)
+
     p = sub.add_parser("doctor")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_doctor)
@@ -6069,8 +6504,12 @@ def build_parser() -> argparse.ArgumentParser:
     init_group = p.add_mutually_exclusive_group()
     init_group.add_argument("--with-layers", action="store_true")
     init_group.add_argument("--with-template", action="store_true")
+    init_group.add_argument("--template", metavar="ID",
+                            help="create a new agent in this empty folder from a shipped agent template")
     p.add_argument("--body-root", metavar="DIR",
                    help="visible folder that holds the agent body (default: the project root)")
+    p.add_argument("--no-trust", action="store_true",
+                   help="with --template: do not record Codex folder and hook trust in the Codex user config")
     p.add_argument("--binding-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_init, adopt=False, binding_only=False)
@@ -6183,7 +6622,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("topic", nargs="?")
     p.set_defaults(func=cmd_guide)
 
-    sub.add_parser("templates").set_defaults(func=cmd_templates)
+    p = sub.add_parser("templates", help="list the starter context gallery and the agent templates")
+    p.add_argument("--json", action="store_true", help="emit a machine-readable result")
+    p.set_defaults(func=cmd_templates)
     return parser
 
 

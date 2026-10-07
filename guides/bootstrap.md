@@ -49,6 +49,36 @@ The identity also holds the project id, `identity.id`: the one id other tools, s
 
 Doctor reports a project without an id and a configured icon whose file is missing. An absent name, description, or icon is healthy and is not a finding.
 
+## Agent Templates
+
+An agent template is a ready agent ContextKit ships: an identity, a starter body, the capabilities the agent needs, and an onboarding that gets it up to speed. The starter context set behind `--with-template` stays the empty agent; agent templates live beside it.
+
+Each template is a folder `templates/agents/<id>/` holding a `template.toml` manifest and the template's body files:
+
+```toml
+id = "personal-agent"            # equals the folder name
+name = "Personal Agent"          # the template's display name in a gallery
+description = "One line."        # the gallery line and the new agent's identity description
+icon = "icon.png"                # square PNG inside the folder; becomes the agent's icon
+capabilities = ["mailbox", "tasks"]   # enabled for the new project through the capabilities manager
+agent_names = ["Arthur", "Felix"]     # the new agent's name is picked at random from this list
+
+[onboarding]
+routine = "onboarding"           # the routine that carries the onboarding; omit the table for none
+```
+
+Body files sit under the canonical layer names `context/`, `routines/`, and `assets/`, and land wherever the new project's config places those layers, `body.root` included. A template's routines are its `routines/*.md` files, read from their front matter.
+
+`contextkit templates --json` lists the templates with their manifest values and routines. `contextkit init --template <id>`, run in an empty folder, creates the agent in one step: a Git repository as bootstrap creates one in an empty folder, with the body left ready to commit, the binding and the layers, the template's files, the identity, the capabilities enabled for the project, the Codex and Claude bindings, and the generated context. It refuses a folder that holds anything but a `.git` repository or a `.DS_Store` marker, and an unknown id, and changes nothing then. Running it is the human's act of creating the agent, so enabling the manifest's capabilities crosses no further gate; the command reports each capability with its result, counts one as enabled only when the capabilities manager reports it effective for the project, and exits non-zero naming any that failed while the body and the repository stay in place for the repair.
+
+## Onboarding
+
+An agent created from a template with an onboarding carries `[onboarding]` in `.contextkit/config.toml`: `status`, `pending` or `complete`, and the `routine` that carries it. While it is pending, generated context opens the project's part with an Onboarding block that names the routine and tells the agent to finish it before other work, so every session starts with it.
+
+Only the state is stored. What remains is checked live by the routine itself, through the capabilities and the project files, so stored progress cannot disagree with reality. The routine ends with `contextkit onboarding complete`, which sets the status, rebuilds, and removes the block; running it again changes nothing. `contextkit onboarding status` reports the state.
+
+Doctor reports a pending onboarding as information and still passes. A pending onboarding whose routine is no longer declared is a problem, because the block would point nowhere.
+
 ## Main Flow
 
 From the project root:
@@ -82,6 +112,7 @@ contextkit init --with-template
 contextkit adopt
 contextkit adopt --with-layers
 contextkit adopt --with-template
+contextkit init --template <id>
 contextkit install-hooks --target codex --target claude
 contextkit build
 contextkit doctor
