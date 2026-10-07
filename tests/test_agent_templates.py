@@ -126,7 +126,8 @@ class AgentTemplateTests(unittest.TestCase):
         self.assertEqual(personal["capabilities"], PERSONAL_CAPABILITIES)
         self.assertEqual([item["name"] for item in personal["routines"]], ["daily-brief", "onboarding"])
         self.assertEqual(personal["onboarding"], {"routine": "onboarding"})
-        self.assertTrue(personal["agent_names"])
+        manifest = tomllib.loads((PERSONAL_AGENT / "template.toml").read_text())
+        self.assertEqual(personal["agent_names"], manifest["agent_names"], "the names init picks from, in manifest order")
 
     def test_plain_templates_shows_the_starter_gallery_and_names_agent_templates(self) -> None:
         result = self.run_cli("templates", cwd=self.root)
@@ -194,6 +195,33 @@ class AgentTemplateTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             names.add(json.loads(result.stdout)["identity"]["name"])
         self.assertTrue(names <= set(manifest["agent_names"]))
+
+    def test_init_template_takes_a_chosen_name(self) -> None:
+        result, report = self.create_agent("--name", "  Margaret  ")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(report["identity"]["name"], "Margaret")
+        self.assertEqual(self.config()["identity"]["name"], "Margaret")
+        shown = json.loads(self.run_cli("identity", "show", "--json").stdout)
+        self.assertEqual(shown["name"], "Margaret")
+        self.assertEqual(self.config()["onboarding"], {"status": "pending", "routine": "onboarding"})
+
+    def test_init_template_refuses_an_invalid_name_and_creates_nothing(self) -> None:
+        for name, reason in (("", "expected a non-empty string"), ("   ", "expected a non-empty string"),
+                             ("Two\nLines", "expected one line"), ("Tab\there", "control or line-separator"),
+                             ("x" * 121, "within 120 characters")):
+            with self.subTest(name=name):
+                result = self.run_cli("init", "--template", "personal-agent", "--name", name, "--json")
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("invalid --name", result.stderr)
+                self.assertIn(reason, result.stderr)
+                self.assertEqual(list(self.project.iterdir()), [])
+                self.assertEqual(self.manager_calls(), [])
+
+    def test_name_applies_only_to_a_template_init(self) -> None:
+        result = self.run_cli("init", "--name", "Margaret")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("`--name` applies only to `init --template`", result.stderr)
+        self.assertEqual(list(self.project.iterdir()), [])
 
     def test_a_capability_that_fails_to_enable_is_named_and_fails_the_command(self) -> None:
         result, report = self.create_agent(env={"STUB_FAIL": "telegram", "STUB_MISSING": "calendar"})
@@ -364,15 +392,25 @@ class AgentTemplateTests(unittest.TestCase):
 
     def test_help_and_readme_name_the_feature(self) -> None:
         help_text = self.run_cli("help", cwd=self.root).stdout
-        self.assertIn("contextkit init --template <id>", help_text)
+        self.assertIn("contextkit init --template <id> [--name <text>]", help_text)
+        init_help = self.run_cli("init", "--help", cwd=self.root).stdout
+        self.assertIn("--name", init_help)
+        self.assertIn("agent_names", init_help)
+        templates_text = self.run_cli("templates", cwd=self.root).stdout
+        self.assertIn("--name <text>", templates_text)
+        self.assertIn("agent_names", templates_text)
         self.assertIn("contextkit onboarding status", help_text)
         self.assertIn("contextkit onboarding complete", help_text)
         self.assertIn("contextkit templates [--json]", help_text)
         readme = (REPO_ROOT / "README.md").read_text()
         self.assertIn("contextkit init --template personal-agent", readme)
+        self.assertIn("--name", readme)
+        self.assertIn("agent_names", readme)
         guide = self.run_cli("guide", "bootstrap", cwd=self.root).stdout
         self.assertIn("## Agent Templates", guide)
         self.assertIn("template.toml", guide)
+        self.assertIn("`--name <text>`", guide)
+        self.assertIn("`agent_names`", guide)
 
 
 if __name__ == "__main__":

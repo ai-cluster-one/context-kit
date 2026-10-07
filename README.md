@@ -198,9 +198,10 @@ ContextKit ships agent templates: ready agents with an identity, a starter body,
 ```sh
 contextkit templates --json
 contextkit init --template personal-agent
+contextkit init --template personal-agent --name Felix
 ```
 
-The command initialises Git as `bootstrap` does, creates the binding, the layers, and the template's files, sets the identity from the template with a name picked from its list, enables the template's capabilities for the project through the capabilities manager, installs the Codex and Claude bindings, and builds generated context. While onboarding is pending, generated context tells the agent to run its onboarding routine before other work; the routine ends with `contextkit onboarding complete`. Use `contextkit guide bootstrap` for the template format and the onboarding state.
+Each agent template lists the names a new agent picks from as `agent_names`. The command initialises Git as `bootstrap` does, creates the binding, the layers, and the template's files, sets the identity from the template with the name given by `--name` or, without it, one picked at random from `agent_names`, enables the template's capabilities for the project through the capabilities manager, installs the Codex and Claude bindings, and builds generated context. While onboarding is pending, generated context tells the agent to run its onboarding routine before other work; the routine ends with `contextkit onboarding complete`. Use `contextkit guide bootstrap` for the template format and the onboarding state.
 
 ## Project Memory
 

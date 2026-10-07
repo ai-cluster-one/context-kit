@@ -2798,8 +2798,11 @@ def _enable_template_capabilities(root: Path, names: list[str]) -> list[dict[str
     return results
 
 
-def _init_from_template(root: Path, template_id: str, body_root: str | None, trust: bool) -> dict[str, Any]:
-    """Create a new agent in the empty folder `root` from one shipped agent template."""
+def _init_from_template(root: Path, template_id: str, body_root: str | None, trust: bool, name: str | None = None) -> dict[str, Any]:
+    """Create a new agent in the empty folder `root` from one shipped agent template.
+
+    The agent takes `name` when one is given, otherwise a name picked at random from the template's `agent_names`.
+    """
     templates = _agent_template_dirs()
     if template_id not in templates:
         _die(
@@ -2808,6 +2811,10 @@ def _init_from_template(root: Path, template_id: str, body_root: str | None, tru
             2,
         )
     template = _agent_template(templates[template_id])
+    if name is not None:
+        checked = _validated_identity_text("name", name, "--name", 2)
+        _reject_identity_control_characters(name, "--name")
+        name = checked
     present = sorted(entry.name for entry in root.iterdir() if entry.name not in EMPTY_FOLDER_IGNORED)
     if present:
         shown = ", ".join(present[:5]) + (", ..." if len(present) > 5 else "")
@@ -2833,7 +2840,8 @@ def _init_from_template(root: Path, template_id: str, body_root: str | None, tru
 
     staged = _stage_identity_icon(root, template["icon"])
     init["created"].append(str(staged["path"]))
-    name = secrets.choice(template["agent_names"])
+    if name is None:
+        name = secrets.choice(template["agent_names"])
     _write_identity_values(root, [("name", name), ("description", template["description"]), ("icon", staged["reference"])])
     if template["onboarding"]:
         _write_config_values(root, ONBOARDING_TABLE, [("status", "pending"), ("routine", template["onboarding"]["routine"])])
@@ -2893,8 +2901,11 @@ def cmd_init(args: argparse.Namespace) -> int | None:
         _die("`--binding-only` is the default and cannot be combined with `--with-layers`, `--with-template`, or `--template`.", 2)
     if getattr(args, "no_trust", False) and not template:
         _die("`--no-trust` applies only to `init --template`, which installs host bindings.", 2)
+    if getattr(args, "name", None) is not None and not template:
+        _die("`--name` applies only to `init --template`, which names the new agent.", 2)
     if template:
-        result = _init_from_template(root, template, getattr(args, "body_root", None), trust=not args.no_trust)
+        result = _init_from_template(root, template, getattr(args, "body_root", None), trust=not args.no_trust,
+                                     name=getattr(args, "name", None))
         _emit(result, True) if args.json else _emit(_format_template_init(result))
         failed = [item for item in result["capabilities"] if item["result"] != "enabled"]
         if failed:
@@ -6350,6 +6361,7 @@ def cmd_templates(args: argparse.Namespace) -> None:
     lines += [
         "",
         "Run `contextkit init --template <id>` in an empty folder to create an agent from an agent template.",
+        "Pass `--name <text>` to name the agent; without it the agent takes a name picked at random from the template's `agent_names`.",
     ]
     _emit("\n".join(lines) + "\n")
 
@@ -6373,7 +6385,7 @@ Commands:
   contextkit onboarding status [--project DIR] [--json]
   contextkit onboarding complete [--project DIR] [--json]
   contextkit init [--with-layers|--with-template] [--body-root DIR] [--json]
-  contextkit init --template <id> [--body-root DIR] [--no-trust] [--json]
+  contextkit init --template <id> [--name <text>] [--body-root DIR] [--no-trust] [--json]
   contextkit adopt [--with-layers|--with-template] [--body-root DIR] [--json]
   contextkit global-context init <path> [--json]
   contextkit install-hooks --target codex|claude [--target ...] [--no-trust] [--json]
@@ -6510,6 +6522,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="visible folder that holds the agent body (default: the project root)")
     p.add_argument("--no-trust", action="store_true",
                    help="with --template: do not record Codex folder and hook trust in the Codex user config")
+    p.add_argument("--name", metavar="TEXT",
+                   help="with --template: the new agent's name (default: one picked at random from the template's agent_names)")
     p.add_argument("--binding-only", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_init, adopt=False, binding_only=False)
