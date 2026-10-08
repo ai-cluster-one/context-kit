@@ -61,7 +61,7 @@ name = "Personal Agent"          # the template's display name in a gallery
 description = "One line."        # the gallery line and the new agent's identity description
 icon = "icon.png"                # square PNG inside the folder; becomes the agent's icon
 capabilities = ["mailbox", "tasks"]   # enabled for the new project through the capabilities manager
-agent_names = ["Arthur", "Felix"]     # the new agent's name is picked at random from this list
+agent_names = ["Arthur", "Felix"]     # the names offered for the new agent; init picks one at random unless --name is given
 
 [onboarding]
 routine = "onboarding"           # the routine that carries the onboarding; omit the table for none
@@ -69,7 +69,7 @@ routine = "onboarding"           # the routine that carries the onboarding; omit
 
 Body files sit under the canonical layer names `context/`, `routines/`, and `assets/`, and land wherever the new project's config places those layers, `body.root` included. A template's routines are its `routines/*.md` files, read from their front matter.
 
-`contextkit templates --json` lists the templates with their manifest values and routines. `contextkit init --template <id>`, run in an empty folder, creates the agent in one step: a Git repository as bootstrap creates one in an empty folder, with the body left ready to commit, the binding and the layers, the template's files, the identity, the capabilities enabled for the project, the Codex and Claude bindings, and the generated context. It refuses a folder that holds anything but a `.git` repository or a `.DS_Store` marker, and an unknown id, and changes nothing then. Running it is the human's act of creating the agent, so enabling the manifest's capabilities crosses no further gate; the command reports each capability with its result, counts one as enabled only when the capabilities manager reports it effective for the project, and exits non-zero naming any that failed while the body and the repository stay in place for the repair.
+`contextkit templates --json` lists the templates with their manifest values and routines; each agent template's `agent_names` are the names a new agent picks from, in manifest order. `contextkit init --template <id>`, run in an empty folder, creates the agent in one step: a Git repository as bootstrap creates one in an empty folder, with the body left ready to commit, the binding and the layers, the template's files, the identity, the capabilities enabled for the project, the Codex and Claude bindings, and the generated context. `--name <text>` gives the agent that name, validated as `contextkit identity set --name` validates it; without it the agent takes a name picked at random from `agent_names`. The result's `identity.name` reports the name used. It refuses a folder that holds anything but a `.git` repository or a `.DS_Store` marker, an unknown id, and an invalid name, and changes nothing then. Running it is the human's act of creating the agent, so enabling the manifest's capabilities crosses no further gate; the command reports each capability with its result, counts one as enabled only when the capabilities manager reports it effective for the project, and exits non-zero naming any that failed while the body and the repository stay in place for the repair.
 
 ## Onboarding
 
