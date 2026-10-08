@@ -1,13 +1,13 @@
 {
   "files": {
-    "bin/contextkit": "48884abdaaf7ea815e1720e4a4378172426aab57b79508f5d7cf502a60a655e8",
+    "bin/contextkit": "813dcbaf0f9d4c261948ca2be7f6704f83a2ba4da8e0717c47fb4752b8283b32",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "11e83b1cf5ac7177d70e5718c4e146f60e837f95d8b2e968947614ade390f66d",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "0e2fe7be0ce4af187c6c638cda7f59032621b18701390b885ea3f425b6fe2a19",
     "guides/authoring.md": "fe42a20746bd9358882c9663e0d5baea8f8721e7d5f2e64103f63264380f04f1",
-    "guides/bootstrap.md": "2b5ad5e0a8462c72bef4912e8a248750dbb0259d07038c3077337bbc1125c132",
+    "guides/bootstrap.md": "3ae896c1f6a282b6188dbe5ec702a604b8f07fb62a99e019174cb3d3e82e94b1",
     "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
@@ -27,7 +27,7 @@
     "templates/agents/personal-agent/context/identity/OWNER.md": "19eb59ba9ab76741238bcd8d71caebb7a5cc5fdf9c9d12a8565771f5638b2f91",
     "templates/agents/personal-agent/context/identity/PEOPLE.md": "fec30f6eda10d8c6dc56ed6375c144c15788510e85b6a36ae7454b3bb8a15270",
     "templates/agents/personal-agent/context/projects/PROJECTS.md": "554ca8ebf5edbc47955ff43549dded06ded765c994d3a3902cb2000d98fbb0e4",
-    "templates/agents/personal-agent/icon.png": "5011cd933756f750581c20df8e5a3a4495f74be84d0e96d5365e1fb20e020f59",
+    "templates/agents/personal-agent/icon.png": "177a01dfc44d80b2eeb8b3852690390b535697bd593e1b3c5797329017ab895c",
     "templates/agents/personal-agent/routines/daily-brief.md": "2eee5fa6470e82980dd9f8e78c69283602ecb771a871d5a916a3ca373c950306",
     "templates/agents/personal-agent/routines/onboarding.md": "0374004f2b4b0d5f82dfaf3523bfb4c9bae5be7f165d98694635c23d94ef01bd",
     "templates/agents/personal-agent/template.toml": "da5ba978badf80fe76413d5a4eedb39800860ff3ce23192fd18e1a91244527da",
@@ -43,5 +43,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.7"
+  "version": "0.3.8"
 }
