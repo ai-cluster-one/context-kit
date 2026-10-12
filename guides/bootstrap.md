@@ -49,6 +49,8 @@ The identity also holds the project id, `identity.id`: the one id other tools, s
 
 Doctor reports a project without an id and a configured icon whose file is missing. An absent name, description, or icon is healthy and is not a finding.
 
+When a shared store is configured, the store also holds the agent's row in the agents registry table `contextkit_agents`: the project id, the configured name (empty while the name is the folder default), the description, and the icon with its SHA-256. The config stays the source. `init`, every `contextkit identity` write and every build upsert the row from it; a rerun with unchanged values rewrites nothing, and the store never assigns or changes the id. No path or credential enters the store. capabilities-contract owns the store setting - the `AGENTKIT_DB_*` keys in the project's `.env.local` or `.env`, the same keys in the process environment, or the machine's store setting - and ContextKit loads it, with psycopg, only when one of those is set, so a project without a store needs neither. Without a store, or when the store or its library is unavailable, the write is skipped, the command reports it under `store`, and its result is otherwise unchanged. Doctor reports the store state as information, never as a finding.
+
 ## Agent Templates
 
 An agent template is a ready agent ContextKit ships: an identity, a starter body, the capabilities the agent needs, and an onboarding that gets it up to speed. The starter context set behind `--with-template` stays the empty agent; agent templates live beside it.

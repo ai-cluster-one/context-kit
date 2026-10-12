@@ -191,6 +191,34 @@ IDENTITY_ICON_NAME = re.compile(r"icon-[0-9a-f]{12}\.png")
 MAX_IDENTITY_ICON_BYTES = 1024 * 1024
 IDENTITY_ICON_MIN_PX = 64
 IDENTITY_ICON_MAX_PX = 1024
+# The agents registry: one row per agent in the shared store, keyed by the
+# project id the config holds. capabilities-contract owns the store setting and
+# its cascade; ContextKit loads it, and psycopg under it, only when a level of
+# that cascade is set, so a machine without a store needs neither.
+STORE_OWNER = "contextkit"
+STORE_KEY_PREFIX = "AGENTKIT_DB_"
+STORE_PROJECT_FILES = (".env.local", ".env")
+STORE_SETTING_REL = Path("agentkit") / "store.json"
+STORE_CONNECT_TIMEOUT = 5
+STORE_VERSION = (1, 0)
+STORE_STEPS = (
+    (
+        "0001-agents",
+        "CREATE TABLE contextkit_agents ("
+        "id text PRIMARY KEY, name text, description text, icon_sha text, icon bytea, "
+        "created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())",
+    ),
+)
+# Only a row whose content differs is rewritten, so `updated_at` moves only on change.
+STORE_UPSERT = (
+    "INSERT INTO contextkit_agents AS agent (id, name, description, icon_sha, icon) "
+    "VALUES (%(id)s, %(name)s, %(description)s, %(icon_sha)s, %(icon)s) "
+    "ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, "
+    "icon_sha = EXCLUDED.icon_sha, icon = EXCLUDED.icon, updated_at = now() "
+    "WHERE (agent.name, agent.description, agent.icon_sha) "
+    "IS DISTINCT FROM (EXCLUDED.name, EXCLUDED.description, EXCLUDED.icon_sha) "
+    "RETURNING (xmax = 0) AS created"
+)
 GUIDE_TOPICS = [
     "bootstrap",
     "authoring",
@@ -2320,6 +2348,7 @@ def _build_context(root: Path, hosts: list[str] | None = None) -> dict[str, Any]
         "links": links,
         "foreign_instructions": _foreign_instruction_files(root, cfg["output"]),
         "warnings": warnings,
+        "store": _agent_store(root, write=True),
     }
 
 
@@ -2879,6 +2908,7 @@ def _format_template_init(result: dict[str, Any]) -> str:
         f"Files: {len(result['created'])} created",
         f"Hooks: {', '.join(host for host in ('codex', 'claude') if host in result['hooks'])}",
         f"Generated context: `{result['build']['output']}`",
+        _format_agent_store(result["build"]["store"]),
         f"Onboarding: {onboarding['status']}" + (f" (routine `{onboarding['routine']}`)" if onboarding["routine"] else ""),
         "",
         "Capabilities enabled for this project:",
@@ -2916,15 +2946,14 @@ def cmd_init(args: argparse.Namespace) -> int | None:
             )
             return 1
         return 0
-    _emit(
-        _init_project(
-            root,
-            with_layers=with_layers,
-            with_template=with_template,
-            body_root=getattr(args, "body_root", None),
-        ),
-        args.json,
+    result = _init_project(
+        root,
+        with_layers=with_layers,
+        with_template=with_template,
+        body_root=getattr(args, "body_root", None),
     )
+    result["store"] = _agent_store(root, write=True)
+    _emit(result, args.json)
 
 
 def _configured_project_ancestor(path: Path) -> Path | None:
@@ -4417,6 +4446,7 @@ def _doctor_report(root: Path) -> dict[str, Any]:
         "type": cfg["type"],
         "identity": {key: identity[key] for key in ("id", "name", "name_source", "description", "icon")},
         "onboarding": {key: onboarding[key] for key in ("status", "routine", "routine_path")},
+        "store": _agent_store(root, write=False),
         "body_root": cfg["body_root"].as_posix(),
         "ok": not problems,
         "problems": problems,
@@ -4481,6 +4511,95 @@ def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _store_configured(root: Path) -> bool:
+    """Report whether a level of the store cascade is set for `root`, without loading its library.
+
+    capabilities-contract resolves the setting itself; this only decides whether to load it:
+    an `AGENTKIT_DB_*` key in the project's env files or the process environment, or the
+    machine's store setting file.
+    """
+    for name in STORE_PROJECT_FILES:
+        try:
+            lines = (root / name).read_text().splitlines()
+        except (OSError, UnicodeDecodeError):
+            continue
+        for line in lines:
+            key, sep, value = line.strip().partition("=")
+            key = key.strip().removeprefix("export ").strip()
+            if sep and key.startswith(STORE_KEY_PREFIX) and value.strip().strip("\"'"):
+                return True
+    if any(key.startswith(STORE_KEY_PREFIX) and value for key, value in os.environ.items()):
+        return True
+    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
+    return (config_home / STORE_SETTING_REL).is_file()
+
+
+def _agent_row(root: Path, identity: dict[str, str | None]) -> dict[str, Any]:
+    """The registry row for this agent: its id and display values, never a path or a secret."""
+    icon_path = _identity_icon_path(root, identity)
+    icon = icon_path.read_bytes() if icon_path is not None and icon_path.is_file() else None
+    return {
+        "id": identity["id"],
+        "name": identity["name"],
+        "description": identity["description"],
+        "icon_sha": hashlib.sha256(icon).hexdigest() if icon is not None else None,
+        "icon": icon,
+    }
+
+
+def _agent_store(root: Path, write: bool) -> dict[str, Any]:
+    """Upsert this agent's row in the agents registry, or with `write` false only read where it stands.
+
+    The result is information: an absent, unavailable or failing store never fails the
+    command that asked, and the files stay the source of the row.
+    """
+    if not _store_configured(root):
+        detail = "no store is configured" + ("; the agents registry write is skipped" if write else "")
+        return {"configured": False, "state": "not_configured", "detail": detail}
+    report: dict[str, Any] = {"configured": True}
+    try:
+        from capabilities_contract import db
+    except ImportError:
+        return {**report, "state": "unavailable",
+                "detail": f"a store is configured, but capabilities-contract is not installed for {sys.executable}"}
+    if not hasattr(db, "resolve_setting"):
+        return {**report, "state": "unavailable",
+                "detail": "the installed capabilities-contract predates the AGENTKIT_DB_* cascade; 0.4 or newer is required"}
+    identity = _config(root)["identity"]
+    if identity["id"] is None:
+        return {**report, "state": "skipped", "detail": "the project id is not assigned; run `contextkit identity adopt`"}
+    steps = [db.Step(step, sql) for step, sql in STORE_STEPS]
+    major, minor = STORE_VERSION
+    try:
+        conn = db.connect(application_name="contextkit", project_root=root, connect_timeout=STORE_CONNECT_TIMEOUT)
+        try:
+            if write:
+                db.migrate(conn, STORE_OWNER, steps, major=major, minor=minor)
+                with conn.transaction():
+                    written = conn.execute(STORE_UPSERT, _agent_row(root, identity)).fetchone()
+                state = "unchanged" if written is None else "created" if written[0] else "updated"
+                return {**report, "state": state, "detail": f"agents registry row `{identity['id']}` {state}"}
+            status = db.status(conn, STORE_OWNER, steps, major=major, minor=minor)
+            if status.state != "current":
+                return {**report, "state": "table_" + status.state,
+                        "detail": f"the agents registry table is {status.state}; `contextkit build` brings it current"}
+            with conn.transaction():
+                present = conn.execute("SELECT 1 FROM contextkit_agents WHERE id = %s", (identity["id"],)).fetchone()
+            state = "row_present" if present else "row_absent"
+            return {**report, "state": state,
+                    "detail": f"agents registry row `{identity['id']}` " + ("present" if present else "absent; `contextkit build` writes it")}
+        finally:
+            conn.close()
+    except db.DbError as exc:
+        return {**report, "state": "error", "error": exc.slug, "detail": _one_line(exc.message)}
+    except Exception as exc:  # A store failure is reported, never raised into the command.
+        return {**report, "state": "error", "error": type(exc).__name__, "detail": _one_line(str(exc))}
+
+
+def _format_agent_store(store: dict[str, Any]) -> str:
+    return f"Agents registry: {store['state']} - {store['detail']}"
+
+
 def _format_identity(report: dict[str, Any]) -> str:
     source = "configured" if report["name_source"] == "config" else "folder default"
     icon = f"`{report['icon']}`" if report["icon"] else "not set"
@@ -4496,6 +4615,8 @@ def _format_identity(report: dict[str, Any]) -> str:
     for key in ("changed", "unchanged", "removed"):
         if key in report:
             lines.append(f"{key.capitalize()}: {', '.join(report[key]) or 'none'}")
+    if "store" in report:
+        lines.append(_format_agent_store(report["store"]))
     if report["problems"]:
         lines += ["", "Problems:", *[f"- {problem}" for problem in report["problems"]]]
     return "\n".join(lines) + "\n"
@@ -4646,6 +4767,7 @@ def cmd_identity_adopt(args: argparse.Namespace) -> None:
             "unchanged": [] if assigned["changed"] else ["id"],
             "removed": [],
             "id_source": assigned["id_source"],
+            "store": _agent_store(root, write=True),
         },
     )
 
@@ -4689,6 +4811,7 @@ def cmd_identity_set(args: argparse.Namespace) -> None:
             "changed": [key for key in IDENTITY_KEYS if key in changed],
             "unchanged": [key for key in IDENTITY_KEYS if key in desired and key not in changed],
             "removed": removed,
+            "store": _agent_store(root, write=True),
         },
     )
 
@@ -4711,6 +4834,7 @@ def cmd_identity_clear(args: argparse.Namespace) -> None:
             "changed": changed,
             "unchanged": [key for key in requested if key not in changed],
             "removed": removed,
+            "store": _agent_store(root, write=True),
         },
     )
 
@@ -4956,6 +5080,8 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         ]
     elif onboarding["status"] == "complete":
         lines += ["Onboarding:", "- Complete", ""]
+    store = report["store"]
+    lines += ["Store:", f"- {_format_agent_store(store)}. This is information, not a problem.", ""]
     if report["problems"]:
         lines += ["Problems:", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
