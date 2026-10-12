@@ -144,7 +144,7 @@ class MemoryTests(unittest.TestCase):
 
         audit = self.run_cli("audit", "--json")
         self.assertEqual(audit.returncode, 0, audit.stderr)
-        self.assertEqual(json.loads(audit.stdout)["findings"], [])
+        self.assertEqual([item["code"] for item in json.loads(audit.stdout)["findings"]], ["legacy-memory-folder"])
 
     def test_environment_memory_directory_survives_project_redeployment(self) -> None:
         persistent = self.root / "persistent-memory"
@@ -249,8 +249,8 @@ class MemoryTests(unittest.TestCase):
         audit = self.run_cli("audit", "--json")
         self.assertEqual(audit.returncode, 0, audit.stderr)
         findings = json.loads(audit.stdout)["findings"]
-        self.assertEqual([item["code"] for item in findings], ["empty-memory-layer"])
-        self.assertEqual(findings[0]["rule_source"], "contextkit guide memory")
+        self.assertEqual([item["code"] for item in findings], ["legacy-memory-folder", "empty-memory-layer"])
+        self.assertEqual(findings[1]["rule_source"], "contextkit guide memory")
 
     def test_audit_does_not_emit_memory_semantic_duplicate_findings(self) -> None:
         claim = "Every release candidate preserves this exact durable operational constraint before any production deployment begins"
@@ -419,6 +419,113 @@ class MemoryTests(unittest.TestCase):
         rendered = self.run_cli("context", "--target", "codex")
         self.assertEqual(rendered.returncode, 0, rendered.stderr)
         self.assertEqual(rendered.stdout, generated)
+
+
+class MemoryCapabilityBridgeTests(unittest.TestCase):
+    MARKER = "<!-- contextkit:memory-contribution -->"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.project = self.root / "project"
+        self.project.mkdir()
+        self.fragment = self.root / "fragment.md"
+        self.manager = self.root / "capabilities"
+        self.manager.write_text('#!/bin/sh\ncat "$STUB_FRAGMENT"\n')
+        self.manager.chmod(0o755)
+        initialized = self.run_cli("init", "--with-layers", "--json")
+        self.assertEqual(initialized.returncode, 0, initialized.stderr)
+
+    def run_cli(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env.update({"CAPABILITIES_MANAGER": str(self.manager), "STUB_FRAGMENT": str(self.fragment)})
+        env.pop("CONTEXTKIT_MEMORY_DIR", None)
+        return subprocess.run(
+            [str(CONTEXTKIT), *args],
+            cwd=self.project, env=env, input=stdin, text=True, capture_output=True, check=False,
+        )
+
+    def write_memory(self) -> None:
+        memory = self.project / "memory"
+        memory.mkdir(exist_ok=True)
+        (memory / "note.md").write_text("# Note\n\nThe amber release window stays provisional.\n")
+
+    def generated(self, fragment: str) -> str:
+        self.fragment.write_text(fragment)
+        built = self.run_cli("build")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        return (self.project / ".contextkit" / "generated" / "context.md").read_text()
+
+    def test_each_memory_verb_prints_a_deprecation_and_keeps_its_contract(self) -> None:
+        self.write_memory()
+        source = self.root / "import.md"
+        source.write_text("# Imported\n\nAn imported observation.\n")
+        runs = {
+            "add": ("memory", "add", "A bridge-release observation.", "--json"),
+            "context": ("memory", "context", "--json"),
+            "search": ("memory", "search", "amber", "--json"),
+            "status": ("memory", "status", "--json"),
+            "import": ("memory", "import", str(source), "--provider", "claude", "--apply", "--json"),
+        }
+        for verb, args in runs.items():
+            with self.subTest(verb=verb):
+                result = self.run_cli(*args)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn(f"`contextkit memory {verb}` is deprecated", result.stderr)
+                self.assertIn("`memory` capability", result.stderr)
+                self.assertIn("memory adopt", result.stderr)
+                json.loads(result.stdout)
+        plain = self.run_cli("memory", "search", "amber")
+        self.assertEqual(plain.stdout, "memory/note.md:3: The amber release window stays provisional.\n")
+        failed = self.run_cli("memory", "add", "")
+        self.assertEqual(failed.returncode, 2)
+        self.assertIn("deprecated", failed.stderr)
+
+    def test_audit_routes_a_legacy_memory_folder_to_memory_adopt(self) -> None:
+        clean = self.run_cli("audit", "--json")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertNotIn("legacy-memory-folder", [item["code"] for item in json.loads(clean.stdout)["findings"]])
+        self.assertNotIn("legacy-memory-folder", self.run_cli("audit").stdout)
+
+        self.write_memory()
+        audit = self.run_cli("audit", "--json")
+        self.assertEqual(audit.returncode, 0, audit.stderr)
+        findings = [item for item in json.loads(audit.stdout)["findings"] if item["code"] == "legacy-memory-folder"]
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["path"], "memory")
+        self.assertIn("memory adopt", findings[0]["hint"])
+        report = self.run_cli("audit").stdout
+        self.assertIn("`legacy-memory-folder`", report)
+        self.assertIn("- Path: `memory`", report)
+        self.assertIn("`memory adopt`", report)
+
+    def test_legacy_memory_folder_does_not_change_bootstrap_readiness(self) -> None:
+        subprocess.run(["git", "init"], cwd=self.project, text=True, capture_output=True, check=True)
+        self.write_memory()
+        self.fragment.write_text("# Capabilities\n")
+        bootstrapped = self.run_cli("bootstrap", "--yes", "--json")
+        self.assertEqual(bootstrapped.returncode, 0, bootstrapped.stderr)
+        result = json.loads(bootstrapped.stdout)
+        codes = [item["code"] for item in result["audit"]["findings"]]
+        self.assertEqual(codes, ["legacy-memory-folder"])
+        self.assertEqual(result["ready"], result["doctor"]["ok"])
+
+    def test_build_leaves_memory_to_a_marked_capability_contribution(self) -> None:
+        self.write_memory()
+        marked = self.generated(f"# Capabilities\n\n## memory\n\n{self.MARKER}\n\nMemory from the store.\n")
+        self.assertNotIn("# Project Memory", marked)
+        self.assertNotIn("The amber release window", marked)
+        self.assertIn("Memory from the store.", marked)
+        self.assertIn(self.MARKER, marked)
+
+    def test_build_keeps_project_memory_when_the_capability_block_names_memory_without_the_marker(self) -> None:
+        self.write_memory()
+        named = self.generated("# Capabilities\n\n## memory\n\nThe memory capability, with `memory adopt`.\n")
+        self.assertIn("# Project Memory", named)
+        self.assertIn("The amber release window", named)
+        inline = self.generated(f"# Capabilities\n\nThe marker `{self.MARKER}` inside prose is not a declaration.\n")
+        self.assertIn("# Project Memory", inline)
 
 
 if __name__ == "__main__":

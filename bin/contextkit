@@ -173,6 +173,11 @@ EMPTY_FOLDER_IGNORED = (".DS_Store", ".git")
 ONBOARDING_TABLE = ["onboarding"]
 ONBOARDING_STATES = ("pending", "complete")
 MEMORY_DIR_ENV = "CONTEXTKIT_MEMORY_DIR"
+# A line the capabilities block carries when a capability contributes project
+# memory; build then leaves the memory to it and omits its own memory block.
+MEMORY_CONTRIBUTION_MARKER = "<!-- contextkit:memory-contribution -->"
+# Project memory moves to the `memory` capability, which carries a memory folder in with `memory adopt`.
+LEGACY_MEMORY_FINDING = "legacy-memory-folder"
 LEGACY_DOCTRINE_REL = Path("doctrine")
 # Agent identity a host application shows for this project. The values live in
 # the binding config; the icon is an image file beside it, under a name
@@ -2026,6 +2031,18 @@ def _collect_memory(root: Path) -> list[MemoryFile]:
     return files
 
 
+def _memory_deprecation(verb: str) -> None:
+    print(
+        f"contextkit: `contextkit memory {verb}` is deprecated; project memory moves to the `memory` capability. "
+        "Run `memory help` for its verbs and `memory adopt` to carry this project's memory folder into it.",
+        file=sys.stderr,
+    )
+
+
+def _carries_memory_contribution(capability_context: str) -> bool:
+    return any(line.strip() == MEMORY_CONTRIBUTION_MARKER for line in capability_context.splitlines())
+
+
 def _memory_body_for_context(body: str) -> str:
     return MEMORY_ID_PATTERN.sub("", body).strip()
 
@@ -2192,7 +2209,7 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
     stubs = [item for item in files if item.load == "stub"]
     routine_index = _routine_index(root, routines_dir, warnings)
     capability_context = _capability_context(root, capabilities_dir, warnings)
-    memory_block, _memory_files = _render_memory_block(root)
+    memory_block = "" if _carries_memory_contribution(capability_context) else _render_memory_block(root)[0]
     onboarding = cfg["onboarding"]
     onboarding_block = _onboarding_block(root, cfg, warnings) if onboarding and onboarding["status"] == "pending" else ""
 
@@ -2395,6 +2412,7 @@ def _memory_result_with_build(root: Path, result: dict[str, Any]) -> dict[str, A
 
 
 def cmd_memory_add(args: argparse.Namespace) -> None:
+    _memory_deprecation("add")
     root = _find_project_root()
     location = _memory_location(root)
     if args.stdin and args.text is not None:
@@ -2440,6 +2458,7 @@ def cmd_memory_add(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_context(args: argparse.Namespace) -> None:
+    _memory_deprecation("context")
     root = _find_project_root()
     block, files = _render_memory_block(root)
     if args.json:
@@ -2453,6 +2472,7 @@ def cmd_memory_context(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_search(args: argparse.Namespace) -> None:
+    _memory_deprecation("search")
     root = _find_project_root()
     needle = args.query.casefold()
     matches: list[dict[str, Any]] = []
@@ -2473,6 +2493,7 @@ def cmd_memory_search(args: argparse.Namespace) -> None:
 
 
 def cmd_memory_status(args: argparse.Namespace) -> None:
+    _memory_deprecation("status")
     root = _find_project_root()
     location = _memory_location(root)
     files = _collect_memory(root)
@@ -2563,6 +2584,7 @@ def _memory_import_plan(root: Path, source: Path, provider: str) -> dict[str, An
 
 
 def cmd_memory_import(args: argparse.Namespace) -> None:
+    _memory_deprecation("import")
     root = _find_project_root()
     location = _memory_location(root)
     plan = _memory_import_plan(root, Path(args.source), args.provider)
@@ -4104,7 +4126,7 @@ def cmd_bootstrap(args: argparse.Namespace) -> None:
     }
     result = {
         "project": str(root),
-        "ready": doctor["ok"] and not findings,
+        "ready": doctor["ok"] and not [item for item in findings if item.code != LEGACY_MEMORY_FINDING],
         "targets": targets,
         "confirmed_conflicts": confirmed_conflicts,
         "git": git,
@@ -5454,6 +5476,12 @@ def _audit_memory(root: Path, paths: list[Path] | None = None) -> list[Finding]:
                 "Replace the path with a directory or remove it before the first memory capture.",
                 "contextkit guide memory",
             )]
+        findings.append(Finding(
+            "info", LEGACY_MEMORY_FINDING, location.reference,
+            "Project memory moves to the `memory` capability; this memory folder is a legacy source.",
+            "Run `memory adopt` to carry the folder into the `memory` capability.",
+            "memory help",
+        ))
         entries = sorted(base.rglob("*"))
         symlinks = [path for path in entries if path.is_symlink()]
         for path in symlinks:
