@@ -191,6 +191,8 @@ contextkit identity show --json
 
 The resolved identity carries the project id, the name and whether it is the project folder-name default, the description, and the icon's absolute path. `contextkit identity set` and `contextkit identity clear` are the only writers, so a host application reads and writes identity through the CLI instead of editing ContextKit's files. Use `contextkit guide bootstrap` for the values and how doctor judges them.
 
+When a shared store is configured through capabilities-contract, `init`, identity writes, and every build also upsert the project's row in the store's `contextkit_agents` registry; without one ContextKit stays files-only and reports the write as skipped. Use `contextkit guide bootstrap` for the registry.
+
 ## Agent Templates
 
 ContextKit ships agent templates: ready agents with an identity, a starter body, the capabilities they need, and an onboarding. List them, then create an agent from one in an empty folder:
