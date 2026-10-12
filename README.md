@@ -403,6 +403,8 @@ Capabilities are separate tool packages managed by the [capabilities project](ht
 
 When a repository has a `capabilities/` project envelope, ContextKit asks the capabilities manager for `capabilities context --fragment` and inserts the returned Markdown block unchanged into generated runtime context. The capabilities manager owns its intro, enabled-tool enumeration, snapshots, identifiers, connections, references, and guides; ContextKit owns only placement in the combined host context.
 
+A capability that contributes project memory declares it with the line `<!-- contextkit:memory-contribution -->` in that block. When the block carries that line, `contextkit build` leaves project memory to the capability and omits its own Project Memory block; without it, the Project Memory block stays.
+
 ## v0 Scope
 
 The current implementation covers the local, repo-backed agent body:
