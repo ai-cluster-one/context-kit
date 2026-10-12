@@ -192,19 +192,32 @@ MAX_IDENTITY_ICON_BYTES = 1024 * 1024
 IDENTITY_ICON_MIN_PX = 64
 IDENTITY_ICON_MAX_PX = 1024
 # The agents registry: one row per agent in the shared store, keyed by the
-# project id the config holds. capabilities-contract owns the store setting and
-# its cascade; ContextKit loads it, and psycopg under it, only when a level of
-# that cascade is set, so a machine without a store needs neither.
-STORE_OWNER = "contextkit"
+# project id the config holds. ContextKit reaches the store with its own code:
+# it resolves the family store setting itself - the cascade and format the
+# capabilities product's SHEBANG.md defines under "The store setting", which is
+# their one home - and loads psycopg, its only store dependency, only when a
+# level of that cascade answers, so a machine without a store needs nothing.
 STORE_KEY_PREFIX = "AGENTKIT_DB_"
+STORE_KEYS = tuple(
+    STORE_KEY_PREFIX + name
+    for name in ("URL", "HOST", "PORT", "NAME", "USER", "PASSWORD", "SCHEMA", "SSLMODE", "SSLROOTCERT")
+)
 STORE_PROJECT_FILES = (".env.local", ".env")
 STORE_SETTING_REL = Path("agentkit") / "store.json"
+STORE_SETTING_FORMAT = "agentkit.store.v1"
+STORE_SETTING_FIELDS = ("schema", "host", "port", "database", "user", "password", "sslmode", "sslrootcert", "db_schema")
+STORE_DEFAULT_SCHEMA = "agentkit"
+STORE_SSLMODES = ("require", "verify-ca", "verify-full")
+STORE_SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 STORE_CONNECT_TIMEOUT = 5
-STORE_VERSION = (1, 0)
+STORE_LOCK_TIMEOUT = "10s"
+# ContextKit's own migration ledger: one row per applied step, beside the tables
+# it migrates and under the same prefix. A step never changes once released.
+STORE_LEDGER = "contextkit_migrations"
 STORE_STEPS = (
     (
         "0001-agents",
-        "CREATE TABLE contextkit_agents ("
+        "CREATE TABLE IF NOT EXISTS contextkit_agents ("
         "id text PRIMARY KEY, name text, description text, icon_sha text, icon bytea, "
         "created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now())",
     ),
@@ -4511,27 +4524,216 @@ def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _store_configured(root: Path) -> bool:
-    """Report whether a level of the store cascade is set for `root`, without loading its library.
+class StoreError(Exception):
+    """A store failure, named by a stable slug; reported, never raised into a command."""
 
-    capabilities-contract resolves the setting itself; this only decides whether to load it:
-    an `AGENTKIT_DB_*` key in the project's env files or the process environment, or the
-    machine's store setting file.
-    """
-    for name in STORE_PROJECT_FILES:
-        try:
-            lines = (root / name).read_text().splitlines()
-        except (OSError, UnicodeDecodeError):
+    def __init__(self, slug: str, message: str) -> None:
+        super().__init__(message)
+        self.slug = slug
+        self.message = message
+
+
+def _store_env_file(path: Path) -> dict[str, str]:
+    """The store keys a dotenv file sets to a non-empty value."""
+    try:
+        lines = path.read_text().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return {}
+    values: dict[str, str] = {}
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        if not sep or key not in STORE_KEYS:
             continue
-        for line in lines:
-            key, sep, value = line.strip().partition("=")
-            key = key.strip().removeprefix("export ").strip()
-            if sep and key.startswith(STORE_KEY_PREFIX) and value.strip().strip("\"'"):
-                return True
-    if any(key.startswith(STORE_KEY_PREFIX) and value for key, value in os.environ.items()):
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        else:
+            value = value.split(" #", 1)[0].strip()
+        if value:
+            values[key] = value
+        else:
+            values.pop(key, None)
+    return values
+
+
+def _store_level(root: Path) -> dict[str, Any] | None:
+    """The first level of the store setting cascade that answers for `root`, or None.
+
+    The levels, in order: the project's env files (`.env.local` winning key by key over
+    `.env`), the process environment, the machine's setting file. The answering level is
+    used whole. Only names and paths are kept for reporting; values stay in `values`.
+    """
+    values: dict[str, str] = {}
+    origins: dict[str, str] = {}
+    for name in reversed(STORE_PROJECT_FILES):
+        for key, value in _store_env_file(root / name).items():
+            values[key], origins[key] = value, str(root / name)
+    if values:
+        sources = sorted(set(origins.values()), key=lambda path: Path(path).name != ".env.local")
+        return {"level": "project", "source": ", ".join(sources), "keys": sorted(values), "values": values}
+    values = {key: os.environ[key] for key in STORE_KEYS if os.environ.get(key)}
+    if values:
+        return {"level": "environment", "source": "process environment", "keys": sorted(values), "values": values}
+    path = Path(os.path.abspath(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")) / STORE_SETTING_REL
+    if path.is_file():
+        return {"level": "machine", "source": str(path), "keys": [], "path": path}
+    return None
+
+
+def _store_host_is_local(host: str | None) -> bool:
+    if not host or host.startswith("/") or host == "localhost":
         return True
-    config_home = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config")
-    return (config_home / STORE_SETTING_REL).is_file()
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _store_check_sslmode(sslmode: str | None, host: str | None, origin: str) -> str:
+    if sslmode in STORE_SSLMODES or (sslmode == "disable" and _store_host_is_local(host)):
+        return sslmode
+    raise StoreError("sslmode_too_weak" if sslmode in ("disable", "allow", "prefer") else "bad_store_setting",
+                     f"{origin} sets sslmode {sslmode!r}; a store is reached over TLS ({', '.join(STORE_SSLMODES)}), "
+                     "and `disable` is admitted only for a local host")
+
+
+def _store_check_schema(name: object, origin: str) -> str:
+    if not isinstance(name, str) or not STORE_SCHEMA_NAME.fullmatch(name) \
+            or name in ("public", "information_schema") or name.startswith("pg_"):
+        raise StoreError("bad_schema_name", f"{origin} names schema {name!r}, which is not a store schema name")
+    return name
+
+
+def _store_connect_args(level: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Check the answering level and return psycopg connect arguments and the bound schema."""
+    if level["level"] == "machine":
+        return _store_machine_args(level["path"])
+    values, origin = level["values"], level["source"]
+    schema = _store_check_schema(values.get(STORE_KEY_PREFIX + "SCHEMA", STORE_DEFAULT_SCHEMA), origin)
+    url = values.get(STORE_KEY_PREFIX + "URL")
+    if url is not None:
+        parsed = urllib.parse.urlparse(url)
+        if parsed.scheme not in ("postgres", "postgresql"):
+            raise StoreError("store_not_postgres", f"AGENTKIT_DB_URL in {origin} is not a postgresql:// URL")
+        query = urllib.parse.parse_qs(parsed.query)
+        host = (query.get("host") or [parsed.hostname])[0]
+        sslmode = (query.get("sslmode") or ["require"])[0]
+        return {"conninfo": url, "sslmode": _store_check_sslmode(sslmode, host, origin)}, schema
+    fields = {name: values.get(STORE_KEY_PREFIX + key) for name, key in (("host", "HOST"), ("dbname", "NAME"), ("user", "USER"))}
+    missing = [STORE_KEY_PREFIX + key for name, key in (("host", "HOST"), ("dbname", "NAME"), ("user", "USER")) if not fields[name]]
+    if missing:
+        raise StoreError("bad_store_setting", f"{origin} sets a store without {', '.join(missing)} or AGENTKIT_DB_URL")
+    port = values.get(STORE_KEY_PREFIX + "PORT", "5432")
+    if not port.isdigit() or not 0 < int(port) < 65536:
+        raise StoreError("bad_store_setting", f"AGENTKIT_DB_PORT in {origin} is not a port 1-65535")
+    sslmode = _store_check_sslmode(values.get(STORE_KEY_PREFIX + "SSLMODE", "require"), fields["host"], origin)
+    args = {**fields, "port": int(port), "sslmode": sslmode}
+    for name, key in (("password", "PASSWORD"), ("sslrootcert", "SSLROOTCERT")):
+        if values.get(STORE_KEY_PREFIX + key):
+            args[name] = values[STORE_KEY_PREFIX + key]
+    return args, schema
+
+
+def _store_machine_args(path: Path) -> tuple[dict[str, Any], str]:
+    """Read the machine's store setting file, refusing a version or field it does not know."""
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        raise StoreError("bad_store_setting", f"cannot read the store setting {path}: {_one_line(str(exc))}") from exc
+    version = data.get("schema") if isinstance(data, dict) else None
+    if isinstance(version, str) and version.startswith("agentkit.store.") and version != STORE_SETTING_FORMAT:
+        raise StoreError("store_setting_too_new", f"{path} is a {version} setting, which this ContextKit does not know")
+    if version != STORE_SETTING_FORMAT:
+        raise StoreError("bad_store_setting", f"{path} is not a {STORE_SETTING_FORMAT} setting")
+    unknown = sorted(set(data) - set(STORE_SETTING_FIELDS))
+    if unknown:
+        raise StoreError("bad_store_setting", f"{path} carries fields {STORE_SETTING_FORMAT} does not have: {', '.join(unknown)}")
+    args: dict[str, Any] = {}
+    for name, field in (("host", "host"), ("dbname", "database"), ("user", "user")):
+        value = data.get(field)
+        if not isinstance(value, str) or not value or any(ch.isspace() for ch in value):
+            raise StoreError("bad_store_setting", f"{path} needs a {field} with no whitespace")
+        args[name] = value
+    port = data.get("port")
+    if isinstance(port, bool) or not isinstance(port, int) or not 0 < port < 65536:
+        raise StoreError("bad_store_setting", f"{path} needs a port 1-65535")
+    args["port"] = port
+    args["sslmode"] = _store_check_sslmode(data.get("sslmode"), args["host"], str(path))
+    for field in ("password", "sslrootcert"):
+        if data.get(field) is not None:
+            if not isinstance(data[field], str) or "\n" in data[field]:
+                raise StoreError("bad_store_setting", f"{path} carries a {field} that is not one line")
+            if data[field]:
+                args[field] = data[field]
+    schema = data.get("db_schema")
+    return args, _store_check_schema(STORE_DEFAULT_SCHEMA if schema is None else schema, str(path))
+
+
+def _store_connect(level: dict[str, Any]) -> tuple[Any, str]:
+    """An autocommit psycopg connection whose search_path is the configured schema alone."""
+    args, schema = _store_connect_args(level)
+    try:
+        import psycopg
+    except ImportError:
+        raise StoreError("driver_missing", f"a store is configured, but psycopg is not installed for {sys.executable}") from None
+    try:
+        conn = psycopg.connect(**args, application_name="contextkit", connect_timeout=STORE_CONNECT_TIMEOUT, autocommit=True)
+    except psycopg.OperationalError as exc:
+        raise StoreError("store_unreachable", f"cannot reach the store: {_one_line(str(exc))}") from exc
+    try:
+        conn.execute(psycopg.sql.SQL("SET search_path TO {}").format(psycopg.sql.Identifier(schema)))
+    except Exception:
+        conn.close()
+        raise
+    return conn, schema
+
+
+def _store_ledger_state(conn: Any) -> str:
+    """Where ContextKit's tables stand against its steps, read without a lock: `current`,
+    `pending`, or `checksum_mismatch` when an applied step's SQL differs from this release's."""
+    with conn.transaction():
+        if conn.execute("SELECT to_regclass(%s)", (STORE_LEDGER,)).fetchone()[0] is None:
+            return "pending"
+        applied = dict(conn.execute(f"SELECT step, checksum FROM {STORE_LEDGER}").fetchall())
+    state = "current"
+    for step, sql in STORE_STEPS:
+        checksum = hashlib.sha256(sql.encode()).hexdigest()
+        if step not in applied:
+            state = "pending"
+        elif applied[step] != checksum:
+            return "checksum_mismatch"
+    return state
+
+
+def _store_migrate(conn: Any, schema: str) -> None:
+    """Apply ContextKit's unapplied steps, each once with its ledger row, under one
+    advisory lock per schema. A store already current takes no lock and creates nothing."""
+    state = _store_ledger_state(conn)
+    if state == "current":
+        return
+    if state == "checksum_mismatch":
+        raise StoreError("checksum_mismatch", "a ContextKit store step was applied with different SQL")
+    import psycopg
+
+    with conn.transaction():
+        conn.execute(f"SET LOCAL lock_timeout = '{STORE_LOCK_TIMEOUT}'")
+        conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (f"contextkit:{schema}",))
+        if conn.execute("SELECT 1 FROM pg_namespace WHERE nspname = %s", (schema,)).fetchone() is None:
+            conn.execute(psycopg.sql.SQL("CREATE SCHEMA {}").format(psycopg.sql.Identifier(schema)))
+        conn.execute(
+            f"CREATE TABLE IF NOT EXISTS {STORE_LEDGER} (step text PRIMARY KEY, checksum text NOT NULL, "
+            "applied_at timestamptz NOT NULL DEFAULT now())"
+        )
+        applied = dict(conn.execute(f"SELECT step, checksum FROM {STORE_LEDGER}").fetchall())
+        for step, sql in STORE_STEPS:
+            checksum = hashlib.sha256(sql.encode()).hexdigest()
+            if step in applied:
+                if applied[step] != checksum:
+                    raise StoreError("checksum_mismatch", f"ContextKit store step {step} was applied with different SQL")
+                continue
+            conn.execute(sql)
+            conn.execute(f"INSERT INTO {STORE_LEDGER} (step, checksum) VALUES (%s, %s)", (step, checksum))
 
 
 def _agent_row(root: Path, identity: dict[str, str | None]) -> dict[str, Any]:
@@ -4551,38 +4753,31 @@ def _agent_store(root: Path, write: bool) -> dict[str, Any]:
     """Upsert this agent's row in the agents registry, or with `write` false only read where it stands.
 
     The result is information: an absent, unavailable or failing store never fails the
-    command that asked, and the files stay the source of the row.
+    command that asked, and the files stay the source of the row. It names the level of
+    the store setting that answered and its source, never a value from it.
     """
-    if not _store_configured(root):
+    level = _store_level(root)
+    if level is None:
         detail = "no store is configured" + ("; the agents registry write is skipped" if write else "")
-        return {"configured": False, "state": "not_configured", "detail": detail}
-    report: dict[str, Any] = {"configured": True}
-    try:
-        from capabilities_contract import db
-    except ImportError:
-        return {**report, "state": "unavailable",
-                "detail": f"a store is configured, but capabilities-contract is not installed for {sys.executable}"}
-    if not hasattr(db, "resolve_setting"):
-        return {**report, "state": "unavailable",
-                "detail": "the installed capabilities-contract predates the AGENTKIT_DB_* cascade; 0.4 or newer is required"}
+        return {"configured": False, "state": "not_configured", "detail": detail, "level": "none"}
+    report: dict[str, Any] = {"configured": True, "level": level["level"], "source": level["source"]}
     identity = _config(root)["identity"]
-    if identity["id"] is None:
-        return {**report, "state": "skipped", "detail": "the project id is not assigned; run `contextkit identity adopt`"}
-    steps = [db.Step(step, sql) for step, sql in STORE_STEPS]
-    major, minor = STORE_VERSION
     try:
-        conn = db.connect(application_name="contextkit", project_root=root, connect_timeout=STORE_CONNECT_TIMEOUT)
+        _store_connect_args(level)
+        if identity["id"] is None:
+            return {**report, "state": "skipped", "detail": "the project id is not assigned; run `contextkit identity adopt`"}
+        conn, schema = _store_connect(level)
         try:
             if write:
-                db.migrate(conn, STORE_OWNER, steps, major=major, minor=minor)
+                _store_migrate(conn, schema)
                 with conn.transaction():
                     written = conn.execute(STORE_UPSERT, _agent_row(root, identity)).fetchone()
                 state = "unchanged" if written is None else "created" if written[0] else "updated"
                 return {**report, "state": state, "detail": f"agents registry row `{identity['id']}` {state}"}
-            status = db.status(conn, STORE_OWNER, steps, major=major, minor=minor)
-            if status.state != "current":
-                return {**report, "state": "table_" + status.state,
-                        "detail": f"the agents registry table is {status.state}; `contextkit build` brings it current"}
+            status = _store_ledger_state(conn)
+            if status != "current":
+                return {**report, "state": "table_" + status,
+                        "detail": f"the agents registry table is {status}; `contextkit build` brings it current"}
             with conn.transaction():
                 present = conn.execute("SELECT 1 FROM contextkit_agents WHERE id = %s", (identity["id"],)).fetchone()
             state = "row_present" if present else "row_absent"
@@ -4590,8 +4785,9 @@ def _agent_store(root: Path, write: bool) -> dict[str, Any]:
                     "detail": f"agents registry row `{identity['id']}` " + ("present" if present else "absent; `contextkit build` writes it")}
         finally:
             conn.close()
-    except db.DbError as exc:
-        return {**report, "state": "error", "error": exc.slug, "detail": _one_line(exc.message)}
+    except StoreError as exc:
+        state = "unavailable" if exc.slug == "driver_missing" else "error"
+        return {**report, "state": state, "error": exc.slug, "detail": _one_line(exc.message)}
     except Exception as exc:  # A store failure is reported, never raised into the command.
         return {**report, "state": "error", "error": type(exc).__name__, "detail": _one_line(str(exc))}
 
@@ -5081,7 +5277,9 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     elif onboarding["status"] == "complete":
         lines += ["Onboarding:", "- Complete", ""]
     store = report["store"]
-    lines += ["Store:", f"- {_format_agent_store(store)}. This is information, not a problem.", ""]
+    setting = f"{store['level']} ({store['source']})" if store["configured"] else "none answers"
+    lines += ["Store:", f"- {_format_agent_store(store)}. This is information, not a problem.",
+              f"- Store setting: {setting}", ""]
     if report["problems"]:
         lines += ["Problems:", *[f"- {problem}" for problem in report["problems"]], ""]
     lines += ["Git:", f"- Present: {report['git']['present']}", f"- Dirty: {report['git'].get('dirty')}", ""]
