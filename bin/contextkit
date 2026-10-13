@@ -8,9 +8,11 @@ import contextlib
 import datetime as _dt
 import hashlib
 import http.client
+import importlib
 import ipaddress
 import json
 import os
+import platform
 import re
 import secrets
 import shutil
@@ -215,6 +217,13 @@ STORE_DEFAULT_SCHEMA = "agentkit"
 STORE_SSLMODES = ("require", "verify-ca", "verify-full")
 STORE_SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 STORE_CONNECT_TIMEOUT = 5
+# The store driver ships with the installed manager: the manager's own update
+# installs psycopg into the install home, one directory per interpreter, with uv
+# or else pip, so the store is reachable whichever Python runs the launcher. Only
+# the installed manager loads it; a checkout runs on the interpreter's own packages.
+STORE_DRIVER_DIR = ".driver"
+STORE_DRIVER_REQUIREMENT = "psycopg[binary]>=3.2,<4"
+STORE_DRIVER_INSTALL_TIMEOUT = 300
 STORE_LOCK_TIMEOUT = "10s"
 # ContextKit's own migration ledger: one row per applied step, beside the tables
 # it migrates and under the same prefix. A step never changes once released.
@@ -1104,6 +1113,8 @@ def cmd_update(args: argparse.Namespace) -> None:
         _die("contextkit update --apply requires --yes when no interactive terminal is available", 6)
     status, manifest, manifest_bytes, source, paths = _update_status()
     if args.check or status["status"] == "up_to_date":
+        driver_root = paths.home / STORE_DRIVER_DIR
+        status["store_driver"] = _store_driver_state(driver_root) if args.check else _install_store_driver(driver_root)
         _emit(status, args.json)
         return
     if not args.yes:
@@ -1128,6 +1139,7 @@ def cmd_update(args: argparse.Namespace) -> None:
         },
         "installed_source": installed_provenance,
         "reason": "installed release and managed provenance match the selected source",
+        "store_driver": _install_store_driver(paths.home / STORE_DRIVER_DIR),
     })
     status.pop("findings", None)
     _emit(status, args.json)
@@ -4692,13 +4704,109 @@ def _store_machine_args(path: Path) -> tuple[dict[str, Any], str]:
     return args, _store_check_schema(STORE_DEFAULT_SCHEMA if schema is None else schema, str(path))
 
 
-def _store_connect(level: dict[str, Any]) -> tuple[Any, str]:
-    """An autocommit psycopg connection whose search_path is the configured schema alone."""
-    args, schema = _store_connect_args(level)
+def _store_driver_tag() -> str:
+    """The interpreter a driver directory serves: its bytecode tag, ABI flags and machine."""
+    tag = sys.implementation.cache_tag or sys.implementation.name
+    return f"{tag}{getattr(sys, 'abiflags', '')}-{platform.machine().lower() or 'unknown'}"
+
+
+def _installed_driver_root() -> Path | None:
+    """The driver directory of the install home this manager runs from; a checkout has none."""
+    script = _script_path()
+    return script.parent.parent / STORE_DRIVER_DIR if script.parent.name == ".manager" else None
+
+
+def _store_driver_state(root: Path) -> dict[str, str]:
+    tag = _store_driver_tag()
+    target, failed = root / tag, root / f"{tag}.failed"
+    if (target / "psycopg").is_dir():
+        return {"state": "present", "interpreter": sys.executable, "path": str(target)}
+    if failed.is_file():
+        with contextlib.suppress(OSError, UnicodeError):
+            return {"state": "failed", "interpreter": sys.executable, "detail": _one_line(failed.read_text())}
+    return {"state": "missing", "interpreter": sys.executable}
+
+
+def _store_driver_installers() -> list[list[str]]:
+    """The install commands to try in order, each completed by `--target <dir>` and the requirement."""
+    commands: list[list[str]] = []
+    uv = shutil.which("uv")
+    if uv and os.path.isabs(uv):
+        commands.append([uv, "pip", "install", "--quiet", "--no-config", "--python", sys.executable])
+    commands.append([sys.executable, "-m", "pip", "install", "--quiet", "--disable-pip-version-check", "--no-input"])
+    return commands
+
+
+def _install_store_driver(root: Path) -> dict[str, str]:
+    """Install psycopg for the running interpreter under `root`, keeping a driver already there.
+
+    Each installer fills a fresh stage that replaces the target only when it holds
+    psycopg, so a failed or concurrent install never leaves a partial driver. A
+    failure is recorded beside the target and never raised: the files stay usable.
+    """
+    if _store_driver_state(root)["state"] == "present":
+        (root / f"{_store_driver_tag()}.failed").unlink(missing_ok=True)
+        return _store_driver_state(root)
+    tag = _store_driver_tag()
+    errors: list[str] = []
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        for installer in _store_driver_installers():
+            stage = Path(tempfile.mkdtemp(prefix=f".{tag}-", dir=str(root)))
+            try:
+                command = [*installer, "--target", str(stage), STORE_DRIVER_REQUIREMENT]
+                try:
+                    result = subprocess.run(command, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                            timeout=STORE_DRIVER_INSTALL_TIMEOUT, check=False)
+                except (OSError, subprocess.SubprocessError) as exc:
+                    errors.append(f"{Path(command[0]).name}: {_one_line(str(exc))}")
+                    continue
+                if result.returncode == 0 and (stage / "psycopg").is_dir():
+                    with contextlib.suppress(OSError):
+                        os.replace(stage, root / tag)
+                    if (root / tag / "psycopg").is_dir():
+                        (root / f"{tag}.failed").unlink(missing_ok=True)
+                        return _store_driver_state(root)
+                lines = (result.stderr or result.stdout).strip().splitlines()
+                errors.append(f"{Path(command[0]).name}: {_one_line(lines[-1]) if lines else f'exit {result.returncode}'}")
+            finally:
+                shutil.rmtree(stage, ignore_errors=True)
+        detail = f"cannot install {STORE_DRIVER_REQUIREMENT}: " + "; ".join(errors)
+        _atomic_write_text(root / f"{tag}.failed", detail + "\n")
+    except OSError as exc:
+        detail = f"cannot install {STORE_DRIVER_REQUIREMENT}: {_one_line(str(exc))}"
+    return {"state": "failed", "interpreter": sys.executable, "detail": detail}
+
+
+def _import_psycopg() -> Any:
+    """Load psycopg, from the installed manager's own driver for this interpreter.
+
+    An installed manager without one - its release came from an update that predates
+    the driver, or another interpreter runs it - installs it here once, the first time
+    a configured store needs it; a recorded failure waits for `contextkit update --apply`.
+    """
+    root = _installed_driver_root()
+    if root is not None:
+        state = _store_driver_state(root)
+        if state["state"] == "missing":
+            state = _install_store_driver(root)
+        if state["state"] == "present" and state["path"] not in sys.path:
+            sys.path.insert(0, state["path"])
+            importlib.invalidate_caches()
     try:
         import psycopg
     except ImportError:
-        raise StoreError("driver_missing", f"a store is configured, but psycopg is not installed for {sys.executable}") from None
+        detail = f"a store is configured, but psycopg is not installed for {sys.executable}"
+        if root is not None and state["state"] == "failed":
+            detail += f"; {state['detail']}; `contextkit update --apply` installs it again"
+        raise StoreError("driver_missing", detail) from None
+    return psycopg
+
+
+def _store_connect(level: dict[str, Any]) -> tuple[Any, str]:
+    """An autocommit psycopg connection whose search_path is the configured schema alone."""
+    args, schema = _store_connect_args(level)
+    psycopg = _import_psycopg()
     try:
         conn = psycopg.connect(**args, application_name="contextkit", connect_timeout=STORE_CONNECT_TIMEOUT, autocommit=True)
     except psycopg.OperationalError as exc:
@@ -6779,7 +6887,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("update", help="check or update the installed ContextKit distribution")
     update_mode = p.add_mutually_exclusive_group(required=True)
     update_mode.add_argument("--check", action="store_true", help="compare installed and available releases without writing")
-    update_mode.add_argument("--apply", action="store_true", help="install the available release")
+    update_mode.add_argument("--apply", action="store_true", help="install the available release and the store driver for this Python")
     p.add_argument("--yes", action="store_true", help="approve installation without an interactive prompt")
     p.add_argument("--json", action="store_true", help="emit a machine-readable result")
     p.set_defaults(func=cmd_update)

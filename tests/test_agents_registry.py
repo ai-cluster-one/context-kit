@@ -131,10 +131,6 @@ class BlockedLibrariesTestCase(RegistryTestCase):
         self.import_log = self.root / "imports.log"
         self.extra_env = {"PYTHONPATH": str(blocked), "CONTEXTKIT_TEST_IMPORT_LOG": str(self.import_log)}
 
-
-class WithoutStoreLibrariesTests(BlockedLibrariesTestCase):
-    """ContextKit installs and runs unchanged where psycopg is absent, and never loads capabilities-contract."""
-
     def install(self) -> Path:
         """Install this checkout as a release through the manager's own update, and return the installed manager."""
         remote, ref = self.root / "remote", "test-ref"
@@ -153,9 +149,13 @@ class WithoutStoreLibrariesTests(BlockedLibrariesTestCase):
             "CONTEXTKIT_RAW_BASE": remote.as_uri(),
             "CONTEXTKIT_REF": ref,
         })
-        installed = self.run_json("update", "--apply", "--yes")
-        self.assertEqual(installed["status"], "updated")
+        self.installed = self.run_json("update", "--apply", "--yes")
+        self.assertEqual(self.installed["status"], "updated")
         return self.root / "bin" / "contextkit"
+
+
+class WithoutStoreLibrariesTests(BlockedLibrariesTestCase):
+    """ContextKit installs and runs unchanged where psycopg is absent, and never loads capabilities-contract."""
 
     def test_install_build_identity_and_doctor_never_load_them_without_a_store(self) -> None:
         manager = self.install()
@@ -180,6 +180,79 @@ class WithoutStoreLibrariesTests(BlockedLibrariesTestCase):
         self.assertTrue(doctor["ok"], doctor["problems"])
         self.assertEqual(doctor["store"]["state"], "unavailable")
         self.assertEqual(self.import_log.read_text().split(), ["psycopg", "psycopg"])
+
+
+class StoreDriverTests(BlockedLibrariesTestCase):
+    """The installed manager carries its own psycopg, installed by the manager's own update."""
+
+    STORE = {"AGENTKIT_DB_URL": "postgresql://127.0.0.1:1/none?sslmode=disable"}
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.uv_log = self.root / "uv.log"
+        self.extra_env["CONTEXTKIT_TEST_UV_LOG"] = str(self.uv_log)
+
+    def driver(self) -> Path:
+        return self.root / "installed" / ".driver"
+
+    def uv_calls(self) -> list[str]:
+        return self.uv_log.read_text().splitlines() if self.uv_log.exists() else []
+
+    def test_update_installs_the_driver_and_the_installed_manager_loads_it(self) -> None:
+        manager = self.install()
+        driver = self.installed["store_driver"]
+        self.assertEqual((driver["state"], driver["interpreter"]), ("present", sys.executable))
+        self.assertEqual(Path(driver["path"]).parent, self.driver())
+        [call] = self.uv_calls()
+        self.assertIn(f"--python {sys.executable} ", call)
+        self.assertTrue(call.endswith(" psycopg[binary]>=3.2,<4"), call)
+        self.assertEqual(self.run_json("update", "--check")["store_driver"]["state"], "present")
+        self.run_json("init", "--with-layers", manager=manager)
+        store = self.run_json("build", manager=manager, env=self.STORE)["store"]
+        self.assertEqual((store["state"], store["error"]), ("error", "store_unreachable"))
+        self.assertIn("installed stand-in driver", store["detail"])
+        self.assertFalse(self.import_log.exists(), "the interpreter's own psycopg is never reached")
+        self.assertEqual(self.run_json("update", "--apply", "--yes")["store_driver"]["state"], "present")
+        self.assertEqual(len(self.uv_calls()), 1, "a present driver is kept")
+
+    def test_a_release_without_the_driver_installs_it_once_a_store_needs_it(self) -> None:
+        manager = self.install()
+        shutil.rmtree(self.driver())
+        self.run_json("init", "--with-layers", manager=manager)
+        self.assertEqual(self.run_json("build", manager=manager)["store"]["state"], "not_configured")
+        self.assertFalse(self.driver().exists(), "nothing is installed without a store")
+        store = self.run_json("build", manager=manager, env=self.STORE)["store"]
+        self.assertEqual(store["error"], "store_unreachable")
+        self.assertIn("installed stand-in driver", store["detail"])
+        self.run_json("build", manager=manager, env=self.STORE)
+        self.assertEqual(len(self.uv_calls()), 2, "one install by the update, one by the first store use")
+
+    def test_a_failed_install_is_reported_once_and_update_apply_installs_it_again(self) -> None:
+        self.extra_env["CONTEXTKIT_TEST_UV_FAIL"] = "no network"
+        manager = self.install()
+        driver = self.installed["store_driver"]
+        self.assertEqual(driver["state"], "failed")
+        self.assertIn("uv: error: no network", driver["detail"])
+        self.run_json("init", "--with-layers", manager=manager)
+        for _ in range(2):
+            store = self.run_json("build", manager=manager, env=self.STORE)["store"]
+            self.assertEqual((store["state"], store["error"]), ("unavailable", "driver_missing"))
+            self.assertIn("uv: error: no network", store["detail"])
+            self.assertIn("`contextkit update --apply` installs it again", store["detail"])
+        self.assertEqual(len(self.uv_calls()), 1, "a recorded failure is not retried by every command")
+        del self.extra_env["CONTEXTKIT_TEST_UV_FAIL"]
+        self.assertEqual(self.run_json("update", "--check")["store_driver"]["state"], "failed")
+        repaired = self.run_json("update", "--apply", "--yes")
+        self.assertEqual((repaired["status"], repaired["store_driver"]["state"]), ("up_to_date", "present"))
+        self.assertEqual(sorted(path.name for path in self.driver().iterdir()), [Path(repaired["store_driver"]["path"]).name])
+        self.assertEqual(self.run_json("build", manager=manager, env=self.STORE)["store"]["error"], "store_unreachable")
+
+    def test_a_checkout_never_installs_or_loads_a_driver(self) -> None:
+        self.install()
+        self.run_json("init", "--with-layers")
+        store = self.run_json("build", env=self.STORE)["store"]
+        self.assertEqual(store["error"], "driver_missing")
+        self.assertEqual(len(self.uv_calls()), 1)
 
 
 class StoreSettingTests(BlockedLibrariesTestCase):
