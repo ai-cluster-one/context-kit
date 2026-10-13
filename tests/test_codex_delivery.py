@@ -129,8 +129,8 @@ class CodexDeliveryTests(CodexBindingCase):
 
     def test_a_context_change_since_the_session_loaded_it_is_announced_once(self) -> None:
         self.install()
-        added = self.run_cli("memory", "add", "fresh fact")
-        self.assertEqual(added.returncode, 0, added.stderr)
+        built = self.run_cli("build")
+        self.assertEqual(built.returncode, 0, built.stderr)
         (self.project / "context" / "late.md").write_text(
             "---\ntitle: Late\ndescription: A context file written after the last build ran.\nload: inline\norder: 90\n---\n\n# Late\n"
         )
@@ -151,8 +151,11 @@ class CodexDeliveryTests(CodexBindingCase):
     def test_large_context_reaches_the_linked_file_whole(self) -> None:
         self.install()
         note = f"{'x' * 70000}\n{MARKER}\n{'y' * 70000}"
-        added = self.run_cli("memory", "add", "--stdin", stdin=note)
-        self.assertEqual(added.returncode, 0, added.stderr)
+        (self.project / "context" / "large.md").write_text(
+            f"---\ntitle: Large\ndescription: A context file larger than the Codex default budget.\nload: inline\norder: 90\n---\n\n{note}\n"
+        )
+        built = self.run_cli("build")
+        self.assertEqual(built.returncode, 0, built.stderr)
         linked = (self.project / CODEX_LINK).read_text()
         self.assertGreater(len(linked.encode()), 140000)
         self.assertIn(MARKER, linked)

@@ -19,7 +19,6 @@ For each existing file or paragraph, choose the destination by loading the owner
 | Destination             | Rule source                                                     |
 | ----------------------- | --------------------------------------------------------------- |
 | `context/`              | `contextkit guide authoring`                                    |
-| project memory          | `contextkit guide memory`                                       |
 | `assets/`               | `contextkit guide assets`                                       |
 | `routines/`             | `contextkit guide routines`                                     |
 | `capabilities/`         | `contextkit guide capabilities`, then capability-owned surfaces |
@@ -34,7 +33,6 @@ Visible body folders are canonical:
 
 ```text
 context/
-memory/        # only when provisional project memory exists
 assets/
 routines/
 capabilities/
@@ -55,7 +53,7 @@ Use `git mv` when possible. Merge collisions manually. Preserve evidence and cur
 
 Root instruction files such as `CLAUDE.md` or `AGENTS.md` may contain valuable doctrine. They do not remain a second source of truth once ContextKit owns generated runtime context. Classify their contents, move durable facts to the owner, and let ContextKit generate host context.
 
-Provider-specific project memory is a migration input, not a canonical parallel store. Load `contextkit guide memory`, inspect a memory import plan, and apply only the accepted Markdown sources.
+A `memory/` folder is a migration input for the `memory` capability, not a body layer. Carry it into the capability with its own `memory adopt`; start at `memory help`. Classify provider-specific memory like any other legacy instruction source.
 
 ## Verification
 

@@ -27,8 +27,6 @@ Layer names below are canonical. A project may hold them under a configured visi
 
 Configured global context is shared live doctrine outside the project that compiles through the same context-file contract. Use `contextkit guide global-context`.
 
-Use `contextkit memory add` to preserve a new conclusion that future sessions must consider before it has a durable owner. Never store secrets or duplicate an already-owned fact. Use `contextkit guide memory` for capture and grooming judgment.
-
 `assets/` is historical evidence: sessions, plans, research, and raw records. Use `contextkit guide assets`.
 
 `routines/` is repeatable procedure. Use `contextkit guide routines`.

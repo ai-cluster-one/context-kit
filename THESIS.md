@@ -15,7 +15,6 @@ ContextKit is a way to give a project that body.
 A ContextKit project separates the kinds of knowledge an agent needs:
 
 - `context/` holds live doctrine: identity, mission, laws, constraints, architecture, and stable project models.
-- Project memory holds provisional knowledge that future sessions must account for before it is ready for a durable owner; its local folder may be replaced by a configured persistent root.
 - `assets/` preserves evidence: sessions, plans, research, history, raw notes, and records of how the project learned something.
 - `routines/` holds repeatable work: procedures with triggers, order, idempotency, stop conditions, and expected outcomes.
 - `capabilities/` holds project envelopes for tools: the enabled set, project-specific identifiers, references, and connection declarations where the tool's own doctrine allows them.
@@ -28,7 +27,7 @@ This body is not a folder convention for its own sake. It is a way to prevent di
 
 The source body and the runtime context are different things.
 
-The source body is where project-owned knowledge is authored. Durable truth lives in its owning layer; provisional cross-session knowledge stays in memory until it can be classified. The runtime context is a compiled view for a host such as Codex or Claude. Runtime context should contain only what the operating agent needs in that moment: orientation, laws, routing, current provisional memory, and compact awareness of on-demand surfaces.
+The source body is where project-owned knowledge is authored. Durable truth lives in its owning layer; provisional cross-session knowledge stays with the project's memory tool until it can be classified. The runtime context is a compiled view for a host such as Codex or Claude. Runtime context should contain only what the operating agent needs in that moment: orientation, laws, routing, and compact awareness of on-demand surfaces and enabled tools.
 
 This separation matters because context has cost. Always-on text is paid for in every session. A good runtime block helps the agent live inside the project; it does not document the whole product, repeat every guide, or copy every tool contract.
 
@@ -76,7 +75,7 @@ Evidence is valuable because it preserves how the project learned. It may be old
 
 Live doctrine is different. It states what the agent should treat as true now.
 
-Some useful knowledge is not ready for either role. Project memory keeps it visible and provider-neutral long enough for future sessions to account for it. When the conclusion matures, it moves to its durable owner and leaves the hot memory layer.
+Some useful knowledge is not ready for either role. A memory tool the project enables keeps it, provider-neutral, long enough for future sessions to account for it, and speaks for itself in runtime context like any other tool. When the conclusion matures, it moves to its durable owner and leaves memory.
 
 An asset can contain a conclusion, but the conclusion becomes live only when it is promoted into the source file that owns it. The asset remains as evidence. The live layer carries the current fact.
 

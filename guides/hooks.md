@@ -8,9 +8,7 @@ This guide is the operational rule source for host bindings. It applies Host-Neu
 
 Host bindings connect agent runtimes to generated ContextKit output.
 
-When ContextKit creates a new Claude settings file, it disables Claude automatic memory so project continuity routes through ContextKit memory. When Claude settings already exist, preserve their memory policy and merge only the managed hook. Do not change Codex memory settings.
-
-When project memory uses `CONTEXTKIT_MEMORY_DIR`, ensure the host session and build hook receive the same environment anchor. Verify it from that environment with `contextkit memory status`.
+When ContextKit creates a new Claude settings file, it disables Claude automatic memory so project continuity stays out of provider-private memory. When Claude settings already exist, preserve their memory policy and merge only the managed hook. Do not change Codex memory settings.
 
 ContextKit writes one generated context file, `.contextkit/generated/context.md` unless `[output] context` in `.contextkit/config.toml` names another project path. Every host reads that same file through its own native instruction discovery, reached by a symlink ContextKit owns. No hook delivers the context: each host loads it itself, keeps one copy per session, and carries a changed file into a resumed session on its own.
 

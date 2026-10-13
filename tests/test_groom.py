@@ -59,8 +59,6 @@ class GroomTests(unittest.TestCase):
             "independent validator subagent",
             "separate executor subagent",
             "Return the actual diff to the validator",
-            "Exclude active project memory",
-            "`contextkit guide memory`",
             "do not report `PASS`",
             "Do not create packets, schemas, ledgers, JSON protocols, or persistent groom state",
             "shared global owners, external capability owners, and the ContextKit product owner",
