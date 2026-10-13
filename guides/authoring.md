@@ -2,7 +2,7 @@
 
 Use this guide when creating, moving, or repairing project body material.
 
-This guide is the operational rule source for project-body authoring. It applies Context Lens, Altitude, One Fact One Home, Present-Tense Doctrine, Machine-Readable Context, Direct Address, Semantic Line Breaks, and Generated Output, then routes layer-specific work to the memory, assets, routines, and capabilities guides.
+This guide is the operational rule source for project-body authoring. It applies Context Lens, Altitude, One Fact One Home, Present-Tense Doctrine, Machine-Readable Context, Direct Address, Semantic Line Breaks, and Generated Output, then routes layer-specific work to the assets, routines, and capabilities guides.
 
 ## Placement
 
@@ -10,7 +10,7 @@ Classify the material before writing:
 
 - current law, identity, architecture, constraints, or stable project model: `context/`;
 - live doctrine shared unchanged by multiple projects: the configured global context source after loading `contextkit guide global-context`;
-- provisional project knowledge that future sessions must account for before it has a durable owner: the active project memory root after loading `contextkit guide memory`;
+- provisional project knowledge that future sessions must account for before it has a durable owner: the project's memory tool, through its own help;
 - historical evidence, research, plans, raw notes, session records, or snapshots: `assets/`;
 - repeatable ordered work: `routines/`;
 - enabled tool envelopes, identifiers, connection declarations, and project-specific capability references: `capabilities/`;
@@ -22,7 +22,7 @@ Layer names are canonical; their location is configured. A project may hold the 
 Placement tests:
 
 - settled and true for future sessions: live doctrine;
-- needed by future sessions but not yet settled: project memory;
+- needed by future sessions but not yet settled: the project's memory tool;
 - evidence for a past conclusion: asset;
 - recurring ordered work: routine;
 - command-answerable fact: owning tool or CLI.

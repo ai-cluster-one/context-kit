@@ -10,7 +10,7 @@ Use `contextkit help` for exact command syntax.
 
 `contextkit audit` reports deterministic findings that the manager can prove from project structure and authored metadata. It does not decide whether durable facts are duplicated, semantically misplaced, stale in meaning, or owned by the wrong artifact type.
 
-Use `contextkit guide groom` for agent-driven semantic review. Keep memory grooming under `contextkit guide memory`.
+Use `contextkit guide groom` for agent-driven semantic review.
 
 ## Source Routing
 
@@ -20,7 +20,6 @@ Before judging a file, load the rule source that owns that surface:
 | --------------------------------------------------------- | -------------------------------------------------------------------- |
 | `context/**/*.md`                                         | `contextkit guide authoring`                                         |
 | configured global context (`**/*.md`)                     | `contextkit guide global-context`, then `contextkit guide authoring` |
-| active project memory root (`**/*.md`)                    | `contextkit guide memory`                                            |
 | `assets/**/*.md`                                          | `contextkit guide assets`                                            |
 | `routines/**/*.md`                                        | `contextkit guide routines`                                          |
 | `capabilities/` envelopes                                 | `contextkit guide capabilities`, then the capability-owned surface   |

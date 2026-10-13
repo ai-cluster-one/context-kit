@@ -15,36 +15,47 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTEXTKIT = REPO_ROOT / "bin" / "contextkit"
 
 
-class MemoryTests(unittest.TestCase):
+class MemoryRemovalTests(unittest.TestCase):
+    """Project memory belongs to the `memory` capability; ContextKit only routes a leftover folder to it."""
+
+    WARNING = (
+        "legacy memory folder `memory/`: ContextKit does not compile project memory; "
+        "run `memory adopt` to carry it into the `memory` capability"
+    )
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.project = self.root / "project"
         self.project.mkdir()
+        self.fragment = self.root / "fragment.md"
+        self.fragment.write_text("# Capabilities\n")
+        self.manager = self.root / "capabilities"
+        self.manager.write_text('#!/bin/sh\ncat "$STUB_FRAGMENT"\n')
+        self.manager.chmod(0o755)
         initialized = self.run_cli("init", "--with-layers", "--json")
         self.assertEqual(initialized.returncode, 0, initialized.stderr)
 
-    def run_cli(
-        self,
-        *args: str,
-        stdin: str | None = None,
-        env: dict[str, str] | None = None,
-    ) -> subprocess.CompletedProcess[str]:
-        merged_env = dict(os.environ)
-        if env:
-            merged_env.update(env)
+    def run_cli(self, *args: str) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env.update({"CAPABILITIES_MANAGER": str(self.manager), "STUB_FRAGMENT": str(self.fragment)})
         return subprocess.run(
             [str(CONTEXTKIT), *args],
-            cwd=self.project,
-            env=merged_env,
-            input=stdin,
-            text=True,
-            capture_output=True,
-            check=False,
+            cwd=self.project, env=env, text=True, capture_output=True, check=False,
         )
 
-    def test_init_adopt_and_bootstrap_do_not_create_empty_memory(self) -> None:
+    def write_memory(self) -> None:
+        memory = self.project / "memory"
+        memory.mkdir(exist_ok=True)
+        (memory / "2026-10-13.md").write_text("# 2026-10-13\n\n## Note\n\nThe amber release window stays provisional.\n")
+
+    def build(self) -> tuple[dict, str]:
+        built = self.run_cli("build", "--json")
+        self.assertEqual(built.returncode, 0, built.stderr)
+        return json.loads(built.stdout), (self.project / ".contextkit" / "generated" / "context.md").read_text()
+
+    def test_init_adopt_and_bootstrap_create_no_memory_folder(self) -> None:
         self.assertFalse((self.project / "memory").exists())
         adopted = self.run_cli("adopt", "--with-layers", "--json")
         self.assertEqual(adopted.returncode, 0, adopted.stderr)
@@ -63,223 +74,81 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(bootstrapped.returncode, 0, bootstrapped.stderr)
         self.assertFalse((fresh / "memory").exists())
 
-    @staticmethod
-    def context_file(body: str) -> str:
-        return (
-            "---\n"
-            "title: Project Rule\n"
-            "description: Always load for the stable rule used by this memory test.\n"
-            "load: inline\n"
-            "order: 10\n"
-            "---\n\n"
-            "# Project Rule\n\n"
-            f"{body}\n"
-        )
+    def test_memory_is_no_command_layer_or_guide(self) -> None:
+        for args in (("memory", "add", "A note."), ("memory", "status")):
+            with self.subTest(args=args):
+                result = self.run_cli(*args)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("invalid choice: 'memory'", result.stderr)
+        help_text = self.run_cli("help").stdout
+        self.assertNotIn("contextkit memory", help_text)
+        self.assertNotIn("CONTEXTKIT_MEMORY_DIR", help_text)
+        self.assertNotIn("|memory|", help_text)
+        self.assertEqual(self.run_cli("path", "memory").returncode, 2)
+        guide = self.run_cli("guide", "memory")
+        self.assertIn("unknown guide topic: memory", guide.stderr)
+        self.assertFalse((REPO_ROOT / "guides" / "memory.md").exists())
 
-    def test_memory_is_absent_until_first_add_and_context_is_canonical(self) -> None:
-        self.assertFalse((self.project / "memory").exists())
+    def test_a_memory_folder_is_never_compiled_and_build_warns_without_failing(self) -> None:
+        result, generated = self.build()
+        self.assertEqual(result["warnings"], [])
+        self.assertNotIn("legacy memory folder", generated)
 
-        status = self.run_cli("memory", "status", "--json")
-        self.assertEqual(status.returncode, 0, status.stderr)
-        self.assertFalse(json.loads(status.stdout)["present"])
+        self.write_memory()
+        result, generated = self.build()
+        self.assertEqual(result["warnings"], [self.WARNING])
+        self.assertIn(f"- {self.WARNING}", generated)
+        self.assertNotIn("# Project Memory", generated)
+        self.assertNotIn("The amber release window", generated)
+        self.assertNotIn("contextkit memory add", generated)
+        self.assertNotIn("contextkit guide memory", generated)
 
-        empty_context = self.run_cli("memory", "context", "--json")
-        self.assertEqual(empty_context.returncode, 0, empty_context.stderr)
-        self.assertEqual(json.loads(empty_context.stdout)["context"], "")
-        self.assertFalse((self.project / "memory").exists())
+    def test_audit_warns_on_a_memory_folder_and_routes_to_memory_adopt(self) -> None:
+        clean = self.run_cli("audit", "--json")
+        self.assertEqual(clean.returncode, 0, clean.stderr)
+        self.assertEqual(json.loads(clean.stdout)["findings"], [])
 
-        added = self.run_cli(
-            "memory", "add", "A provisional constraint must survive into the next agent session.",
-            "--title", "Session constraint", "--json",
-        )
-        self.assertEqual(added.returncode, 0, added.stderr)
-        added_result = json.loads(added.stdout)
-        self.assertEqual(added_result["status"], "created")
-        memory_file = self.project / added_result["path"]
-        self.assertTrue(memory_file.is_file())
-        self.assertEqual(memory_file.parent, self.project / "memory")
-
-        context = self.run_cli("memory", "context")
-        self.assertEqual(context.returncode, 0, context.stderr)
-        self.assertIn("# Project Memory", context.stdout)
-        self.assertIn("A provisional constraint must survive", context.stdout)
-        self.assertNotIn("contextkit-memory-id", context.stdout)
-
-        for target in [
-            self.project / ".contextkit" / "generated" / "context.md",
-        ]:
-            generated = target.read_text()
-            self.assertIn(context.stdout.strip(), generated)
-            self.assertLess(generated.index("# Project Memory"), generated.index("# Inline Context"))
-
-        duplicate = self.run_cli(
-            "memory", "add", "A provisional constraint must survive into the next agent session.", "--json",
-        )
-        self.assertEqual(duplicate.returncode, 0, duplicate.stderr)
-        self.assertEqual(json.loads(duplicate.stdout)["status"], "skipped")
-        self.assertEqual(memory_file.read_text().count("A provisional constraint must survive"), 1)
-
-    def test_recursive_memory_search_status_and_audit(self) -> None:
-        nested = self.project / "memory" / "imports" / "claude" / "notes.md"
-        nested.parent.mkdir(parents=True)
-        nested.write_text("# Imported\n\nThe cobalt deployment observation remains provisional for the next review.\n")
-
-        build = self.run_cli("build", "--target", "all")
-        self.assertEqual(build.returncode, 0, build.stderr)
-        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
-        self.assertIn("## Memory Source: `memory/imports/claude/notes.md`", generated)
-        self.assertIn("The cobalt deployment observation", generated)
-
-        search = self.run_cli("memory", "search", "COBALT", "--json")
-        self.assertEqual(search.returncode, 0, search.stderr)
-        matches = json.loads(search.stdout)["matches"]
-        self.assertEqual(len(matches), 1)
-        self.assertEqual(matches[0]["path"], "memory/imports/claude/notes.md")
-
-        status = self.run_cli("memory", "status", "--json")
-        self.assertEqual(status.returncode, 0, status.stderr)
-        report = json.loads(status.stdout)
-        self.assertTrue(report["present"])
-        self.assertEqual(report["files"], 1)
-
-        audit = self.run_cli("audit", "--json")
-        self.assertEqual(audit.returncode, 0, audit.stderr)
-        self.assertEqual([item["code"] for item in json.loads(audit.stdout)["findings"]], ["legacy-memory-folder"])
-
-    def test_environment_memory_directory_survives_project_redeployment(self) -> None:
-        persistent = self.root / "persistent-memory"
-        memory_env = {"CONTEXTKIT_MEMORY_DIR": str(persistent)}
-        added = self.run_cli(
-            "memory", "add", "The persistent deployment observation must survive project replacement.", "--json",
-            env=memory_env,
-        )
-        self.assertEqual(added.returncode, 0, added.stderr)
-        result = json.loads(added.stdout)
-        self.assertTrue(result["path"].startswith("$CONTEXTKIT_MEMORY_DIR/"))
-        self.assertEqual(result["memory_directory"], str(persistent.resolve()))
-        self.assertFalse((self.project / "memory").exists())
-        self.assertEqual(len(list(persistent.glob("*.md"))), 1)
-
-        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
-        self.assertNotIn("- Project memory: `$CONTEXTKIT_MEMORY_DIR`", generated)
-        self.assertIn("## Memory Source: `$CONTEXTKIT_MEMORY_DIR/", generated)
-        self.assertNotIn(str(persistent), generated)
-
-        redeployed = self.root / "redeployed-project"
-        redeployed.mkdir()
-        initialized = subprocess.run(
-            [str(CONTEXTKIT), "init", "--with-layers"],
-            cwd=redeployed,
-            env={**os.environ, **memory_env},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(initialized.returncode, 0, initialized.stderr)
-        rebuilt = subprocess.run(
-            [str(CONTEXTKIT), "build", "--target", "codex"],
-            cwd=redeployed,
-            env={**os.environ, **memory_env},
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-        self.assertEqual(rebuilt.returncode, 0, rebuilt.stderr)
-        redeployed_context = (redeployed / ".contextkit" / "generated" / "context.md").read_text()
-        self.assertIn("The persistent deployment observation", redeployed_context)
-
-        status = self.run_cli("memory", "status", "--json", env=memory_env)
-        status_result = json.loads(status.stdout)
-        self.assertTrue(status_result["external"])
-        self.assertEqual(status_result["source"], "$CONTEXTKIT_MEMORY_DIR")
-        self.assertEqual(status_result["directory"], str(persistent.resolve()))
-
-    def test_environment_memory_directory_cannot_overlap_project_layers(self) -> None:
-        for relative in ["context", "assets/persistent-memory", ".codex"]:
-            with self.subTest(relative=relative):
-                status = self.run_cli(
-                    "memory", "status", "--json",
-                    env={"CONTEXTKIT_MEMORY_DIR": relative},
-                )
-                self.assertEqual(status.returncode, 6)
-                self.assertIn("overlaps", status.stderr)
-        self.assertFalse((self.project / "memory").exists())
-
-    def test_import_plan_is_read_only_and_apply_converges(self) -> None:
-        source = self.root / "provider-memory"
-        (source / "nested").mkdir(parents=True)
-        original = "# Provider Note\n\nKeep this Markdown byte-for-byte.\n"
-        (source / "nested" / "note.md").write_text(original)
-        (source / "ignored.txt").write_text("not imported")
-
-        plan = self.run_cli(
-            "memory", "import", str(source), "--provider", "claude", "--plan", "--json",
-        )
-        self.assertEqual(plan.returncode, 0, plan.stderr)
-        plan_result = json.loads(plan.stdout)
-        self.assertEqual([item["status"] for item in plan_result["entries"]], ["create"])
-        self.assertFalse((self.project / "memory").exists())
-
-        applied = self.run_cli(
-            "memory", "import", str(source), "--provider", "claude", "--apply", "--json",
-        )
-        self.assertEqual(applied.returncode, 0, applied.stderr)
-        destination = self.project / "memory" / "imports" / "claude" / "nested" / "note.md"
-        self.assertEqual(destination.read_text(), original)
-        self.assertFalse((destination.parent / "ignored.txt").exists())
-
-        repeated = self.run_cli(
-            "memory", "import", str(source), "--provider", "claude", "--apply", "--json",
-        )
-        self.assertEqual(repeated.returncode, 0, repeated.stderr)
-        repeated_result = json.loads(repeated.stdout)
-        self.assertEqual(repeated_result["created"], [])
-        self.assertEqual(repeated_result["skipped"], ["memory/imports/claude/nested/note.md"])
-
-        destination.write_text("# Local Review\n\nPreserve this conflicting project copy.\n")
-        conflict = self.run_cli(
-            "memory", "import", str(source), "--provider", "claude", "--apply", "--json",
-        )
-        self.assertEqual(conflict.returncode, 6)
-        self.assertIn("blocked by destination conflicts", conflict.stderr)
-        self.assertIn("Preserve this conflicting project copy", destination.read_text())
-
-    def test_audit_reports_empty_memory_directory_as_noise(self) -> None:
-        (self.project / "memory").mkdir()
+        self.write_memory()
+        (self.project / "memory" / "notes.txt").write_text("not Markdown\n")
         audit = self.run_cli("audit", "--json")
         self.assertEqual(audit.returncode, 0, audit.stderr)
         findings = json.loads(audit.stdout)["findings"]
-        self.assertEqual([item["code"] for item in findings], ["legacy-memory-folder", "empty-memory-layer"])
-        self.assertEqual(findings[1]["rule_source"], "contextkit guide memory")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0]["code"], "legacy-memory-folder")
+        self.assertEqual(findings[0]["severity"], "warning")
+        self.assertEqual(findings[0]["path"], "memory")
+        self.assertIn("`memory adopt`", findings[0]["hint"])
+        report = self.run_cli("audit")
+        self.assertEqual(report.returncode, 0, report.stderr)
+        self.assertIn("### WARNING `legacy-memory-folder`", report.stdout)
 
-    def test_audit_does_not_emit_memory_semantic_duplicate_findings(self) -> None:
-        claim = "Every release candidate preserves this exact durable operational constraint before any production deployment begins"
-        context_path = self.project / "context" / "guidelines" / "RELEASE.md"
-        context_path.parent.mkdir(parents=True)
-        context_path.write_text(self.context_file(claim + "."))
-        memory_root = self.project / "memory"
-        memory_root.mkdir()
-        (memory_root / "note.md").write_text("# Note\n\n" + claim + ".\n")
-        (memory_root / "duplicate.md").write_text("# Duplicate\n\n" + claim + ".\n")
+    def test_audit_file_judges_a_memory_file_as_no_memory_layer(self) -> None:
+        self.write_memory()
+        audited = self.run_cli("audit-file", "memory/2026-10-13.md", "--json")
+        self.assertEqual(audited.returncode, 0, audited.stderr)
+        codes = {item["code"] for item in json.loads(audited.stdout)["findings"]}
+        self.assertFalse([code for code in codes if "memory" in code], codes)
 
-        audit = self.run_cli("audit", "--json")
-        self.assertEqual(audit.returncode, 0, audit.stderr)
-        findings = json.loads(audit.stdout)["findings"]
-        removed_semantic_codes = {"memory-duplicates-live-fact", "duplicate-memory-claim"}
-        self.assertTrue(removed_semantic_codes.isdisjoint(item["code"] for item in findings))
-
-    def test_bootstrap_uses_memory_audit_findings(self) -> None:
+    def test_a_memory_folder_does_not_change_bootstrap_readiness(self) -> None:
         subprocess.run(["git", "init"], cwd=self.project, text=True, capture_output=True, check=True)
-        memory_path = self.project / "memory" / "unexpected.txt"
-        memory_path.parent.mkdir()
-        memory_path.write_text("This file type is not compiled into project memory.\n")
-
+        self.write_memory()
         bootstrapped = self.run_cli("bootstrap", "--yes", "--json")
         self.assertEqual(bootstrapped.returncode, 0, bootstrapped.stderr)
         result = json.loads(bootstrapped.stdout)
-        self.assertFalse(result["ready"])
-        codes = [item["code"] for item in result["audit"]["findings"]]
-        self.assertIn("uncompiled-memory-file", codes)
+        self.assertEqual([item["code"] for item in result["audit"]["findings"]], ["legacy-memory-folder"])
+        self.assertEqual(result["ready"], result["doctor"]["ok"])
+        self.assertTrue(result["ready"])
+
+    def test_no_shipped_surface_routes_to_contextkit_memory(self) -> None:
+        shipped = [REPO_ROOT / "README.md", REPO_ROOT / "THESIS.md"]
+        for folder in ("bundle", "guides", "templates"):
+            shipped += sorted((REPO_ROOT / folder).rglob("*.md"))
+        for path in shipped:
+            with self.subTest(path=path.relative_to(REPO_ROOT)):
+                text = path.read_text()
+                self.assertNotIn("contextkit memory", text)
+                self.assertNotIn("contextkit guide memory", text)
+                self.assertNotIn("CONTEXTKIT_MEMORY_DIR", text)
 
     def test_new_claude_settings_disable_auto_memory_without_touching_codex_memory(self) -> None:
         installed = self.run_cli("install-hooks", "--target", "claude", "--target", "codex", "--json")
@@ -350,182 +219,6 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(parsed["features"], {"experimental": True})
         self.assertEqual(set(parsed), {"features", "project_doc_fallback_filenames", "project_doc_max_bytes"})
         self.assertTrue(config.read_text().endswith("\n\n[features]\nexperimental = true\n"))
-
-    def test_memory_paths_cannot_escape_through_symlinks(self) -> None:
-        outside = self.root / "outside"
-        outside.mkdir()
-        (self.project / "memory").symlink_to(outside, target_is_directory=True)
-
-        added = self.run_cli("memory", "add", "This must remain inside the configured memory tree.")
-        self.assertEqual(added.returncode, 6)
-        self.assertIn("must not be a symlink", added.stderr)
-        self.assertEqual(list(outside.iterdir()), [])
-
-        built = self.run_cli("build", "--target", "codex")
-        self.assertEqual(built.returncode, 6)
-        context = self.run_cli("memory", "context")
-        self.assertEqual(context.returncode, 6)
-
-        audit = self.run_cli("audit", "--json")
-        self.assertEqual(audit.returncode, 0, audit.stderr)
-        self.assertEqual(json.loads(audit.stdout)["findings"][0]["code"], "memory-symlink")
-
-    def test_broken_project_memory_symlink_is_never_treated_as_absent(self) -> None:
-        missing = self.root / "missing-memory-target"
-        (self.project / "memory").symlink_to(missing, target_is_directory=True)
-
-        status = self.run_cli("memory", "status", "--json")
-        self.assertEqual(status.returncode, 6)
-        self.assertIn("must not be a symlink", status.stderr)
-
-        built = self.run_cli("build", "--target", "codex")
-        self.assertEqual(built.returncode, 6)
-        self.assertIn("must not be a symlink", built.stderr)
-
-        audit = self.run_cli("audit", "--json")
-        self.assertEqual(audit.returncode, 0, audit.stderr)
-        findings = json.loads(audit.stdout)["findings"]
-        self.assertEqual([item["code"] for item in findings], ["memory-symlink"])
-
-    def test_import_rejects_symlinked_destination_components(self) -> None:
-        source = self.root / "source-memory"
-        source.mkdir()
-        (source / "note.md").write_text("# Source\n\nImported note.\n")
-        outside = self.root / "outside-import"
-        outside.mkdir()
-        memory = self.project / "memory"
-        memory.mkdir()
-        (memory / "imports").symlink_to(outside, target_is_directory=True)
-
-        imported = self.run_cli(
-            "memory", "import", str(source), "--provider", "claude", "--apply", "--json",
-        )
-        self.assertEqual(imported.returncode, 6)
-        self.assertIn("must not be symlinks", imported.stderr)
-        self.assertEqual(list(outside.iterdir()), [])
-
-    def test_large_memory_reaches_the_generated_codex_target_whole(self) -> None:
-        installed = self.run_cli("install-hooks", "--target", "codex", "--json")
-        self.assertEqual(installed.returncode, 0, installed.stderr)
-        large_note = "x" * 140000
-
-        added = self.run_cli("memory", "add", "--stdin", stdin=large_note)
-        self.assertEqual(added.returncode, 0, added.stderr)
-        self.assertTrue(any((self.project / "memory").glob("*.md")))
-
-        generated = (self.project / ".contextkit" / "generated" / "context.md").read_text()
-        self.assertIn(large_note, generated)
-
-        rendered = self.run_cli("context", "--target", "codex")
-        self.assertEqual(rendered.returncode, 0, rendered.stderr)
-        self.assertEqual(rendered.stdout, generated)
-
-
-class MemoryCapabilityBridgeTests(unittest.TestCase):
-    MARKER = "<!-- contextkit:memory-contribution -->"
-
-    def setUp(self) -> None:
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.project = self.root / "project"
-        self.project.mkdir()
-        self.fragment = self.root / "fragment.md"
-        self.manager = self.root / "capabilities"
-        self.manager.write_text('#!/bin/sh\ncat "$STUB_FRAGMENT"\n')
-        self.manager.chmod(0o755)
-        initialized = self.run_cli("init", "--with-layers", "--json")
-        self.assertEqual(initialized.returncode, 0, initialized.stderr)
-
-    def run_cli(self, *args: str, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-        env = dict(os.environ)
-        env.update({"CAPABILITIES_MANAGER": str(self.manager), "STUB_FRAGMENT": str(self.fragment)})
-        env.pop("CONTEXTKIT_MEMORY_DIR", None)
-        return subprocess.run(
-            [str(CONTEXTKIT), *args],
-            cwd=self.project, env=env, input=stdin, text=True, capture_output=True, check=False,
-        )
-
-    def write_memory(self) -> None:
-        memory = self.project / "memory"
-        memory.mkdir(exist_ok=True)
-        (memory / "note.md").write_text("# Note\n\nThe amber release window stays provisional.\n")
-
-    def generated(self, fragment: str) -> str:
-        self.fragment.write_text(fragment)
-        built = self.run_cli("build")
-        self.assertEqual(built.returncode, 0, built.stderr)
-        return (self.project / ".contextkit" / "generated" / "context.md").read_text()
-
-    def test_each_memory_verb_prints_a_deprecation_and_keeps_its_contract(self) -> None:
-        self.write_memory()
-        source = self.root / "import.md"
-        source.write_text("# Imported\n\nAn imported observation.\n")
-        runs = {
-            "add": ("memory", "add", "A bridge-release observation.", "--json"),
-            "context": ("memory", "context", "--json"),
-            "search": ("memory", "search", "amber", "--json"),
-            "status": ("memory", "status", "--json"),
-            "import": ("memory", "import", str(source), "--provider", "claude", "--apply", "--json"),
-        }
-        for verb, args in runs.items():
-            with self.subTest(verb=verb):
-                result = self.run_cli(*args)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn(f"`contextkit memory {verb}` is deprecated", result.stderr)
-                self.assertIn("`memory` capability", result.stderr)
-                self.assertIn("memory adopt", result.stderr)
-                json.loads(result.stdout)
-        plain = self.run_cli("memory", "search", "amber")
-        self.assertEqual(plain.stdout, "memory/note.md:3: The amber release window stays provisional.\n")
-        failed = self.run_cli("memory", "add", "")
-        self.assertEqual(failed.returncode, 2)
-        self.assertIn("deprecated", failed.stderr)
-
-    def test_audit_routes_a_legacy_memory_folder_to_memory_adopt(self) -> None:
-        clean = self.run_cli("audit", "--json")
-        self.assertEqual(clean.returncode, 0, clean.stderr)
-        self.assertNotIn("legacy-memory-folder", [item["code"] for item in json.loads(clean.stdout)["findings"]])
-        self.assertNotIn("legacy-memory-folder", self.run_cli("audit").stdout)
-
-        self.write_memory()
-        audit = self.run_cli("audit", "--json")
-        self.assertEqual(audit.returncode, 0, audit.stderr)
-        findings = [item for item in json.loads(audit.stdout)["findings"] if item["code"] == "legacy-memory-folder"]
-        self.assertEqual(len(findings), 1)
-        self.assertEqual(findings[0]["path"], "memory")
-        self.assertIn("memory adopt", findings[0]["hint"])
-        report = self.run_cli("audit").stdout
-        self.assertIn("`legacy-memory-folder`", report)
-        self.assertIn("- Path: `memory`", report)
-        self.assertIn("`memory adopt`", report)
-
-    def test_legacy_memory_folder_does_not_change_bootstrap_readiness(self) -> None:
-        subprocess.run(["git", "init"], cwd=self.project, text=True, capture_output=True, check=True)
-        self.write_memory()
-        self.fragment.write_text("# Capabilities\n")
-        bootstrapped = self.run_cli("bootstrap", "--yes", "--json")
-        self.assertEqual(bootstrapped.returncode, 0, bootstrapped.stderr)
-        result = json.loads(bootstrapped.stdout)
-        codes = [item["code"] for item in result["audit"]["findings"]]
-        self.assertEqual(codes, ["legacy-memory-folder"])
-        self.assertEqual(result["ready"], result["doctor"]["ok"])
-
-    def test_build_leaves_memory_to_a_marked_capability_contribution(self) -> None:
-        self.write_memory()
-        marked = self.generated(f"# Capabilities\n\n## memory\n\n{self.MARKER}\n\nMemory from the store.\n")
-        self.assertNotIn("# Project Memory", marked)
-        self.assertNotIn("The amber release window", marked)
-        self.assertIn("Memory from the store.", marked)
-        self.assertIn(self.MARKER, marked)
-
-    def test_build_keeps_project_memory_when_the_capability_block_names_memory_without_the_marker(self) -> None:
-        self.write_memory()
-        named = self.generated("# Capabilities\n\n## memory\n\nThe memory capability, with `memory adopt`.\n")
-        self.assertIn("# Project Memory", named)
-        self.assertIn("The amber release window", named)
-        inline = self.generated(f"# Capabilities\n\nThe marker `{self.MARKER}` inside prose is not a declaration.\n")
-        self.assertIn("# Project Memory", inline)
 
 
 if __name__ == "__main__":

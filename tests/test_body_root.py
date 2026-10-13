@@ -19,7 +19,6 @@ class BodyRootTests(unittest.TestCase):
     def run_cli(self, *args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env["CAPABILITIES_MANAGER"] = str(CAPABILITIES_PROVIDER)
-        env.pop("CONTEXTKIT_MEMORY_DIR", None)
         return subprocess.run(
             [str(CONTEXTKIT), *args],
             cwd=cwd,
@@ -99,22 +98,26 @@ class BodyRootTests(unittest.TestCase):
             self.assertEqual([g for g in report["gitignore_guards"] if "state" in g], [])
 
 
-    def test_memory_resolves_under_the_body_root(self) -> None:
+    def test_a_legacy_memory_folder_under_the_body_root_is_warned_by_its_body_path(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = self.project(temp)
             self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
+            (project / "agent" / "memory").mkdir()
+            (project / "agent" / "memory" / "2026-10-13.md").write_text("# 2026-10-13\n\n## Note\n\nKept.\n")
 
-            added = self.run_cli("memory", "add", "--title", "Note", "Body root note.", "--json", cwd=project)
-            self.assertEqual(added.returncode, 0, added.stderr)
-            self.assertTrue(json.loads(added.stdout)["path"].startswith("agent/memory/"))
-            self.assertTrue((project / "agent" / "memory").is_dir())
-            self.assertFalse((project / "memory").exists())
+            built = self.run_cli("build", "--json", cwd=project)
+            self.assertEqual(built.returncode, 0, built.stderr)
+            warnings = json.loads(built.stdout)["warnings"]
+            self.assertEqual([w for w in warnings if "memory" in w], [
+                "legacy memory folder `agent/memory/`: ContextKit does not compile project memory; "
+                "run `memory adopt` to carry it into the `memory` capability",
+            ])
+            audit = self.run_cli("audit", "--json", cwd=project)
+            self.assertEqual(audit.returncode, 0, audit.stderr)
+            findings = [f for f in json.loads(audit.stdout)["findings"] if f["code"] == "legacy-memory-folder"]
+            self.assertEqual([f["path"] for f in findings], ["agent/memory"])
 
-            status = self.run_cli("memory", "status", cwd=project)
-            self.assertEqual(status.returncode, 0, status.stderr)
-            self.assertIn("Source: `agent/memory`", status.stdout)
-
-    def test_memory_is_nameable_like_any_other_layer(self) -> None:
+    def test_memory_is_not_a_layer_even_when_the_config_still_names_it(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             project = self.project(temp)
             self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
@@ -124,43 +127,13 @@ class BodyRootTests(unittest.TestCase):
             )
 
             resolved = self.run_cli("path", "memory", cwd=project)
-            self.assertEqual(resolved.returncode, 0, resolved.stderr)
-            self.assertEqual(Path(resolved.stdout.strip()), project / "agent" / "notes")
-
-            added = self.run_cli("memory", "add", "--title", "Note", "Named memory layer.", "--json", cwd=project)
-            self.assertEqual(added.returncode, 0, added.stderr)
-            self.assertTrue(json.loads(added.stdout)["path"].startswith("agent/notes/"))
-            self.assertFalse((project / "agent" / "memory").exists())
-
-    def test_memory_dir_env_still_overrides_the_configured_source(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            project = self.project(temp)
-            self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
-            external = Path(temp).resolve() / "external-memory"
-            external.mkdir()
-
-            env = dict(os.environ)
-            env["CAPABILITIES_MANAGER"] = str(CAPABILITIES_PROVIDER)
-            env["CONTEXTKIT_MEMORY_DIR"] = str(external)
-            status = subprocess.run(
-                [str(CONTEXTKIT), "memory", "status"],
-                cwd=project, env=env, text=True, capture_output=True, check=False,
-            )
-            self.assertEqual(status.returncode, 0, status.stderr)
-            self.assertIn("$CONTEXTKIT_MEMORY_DIR", status.stdout)
-            self.assertIn("environment-configured", status.stdout)
-
-    def test_absent_memory_layer_is_not_a_doctor_problem(self) -> None:
-        with tempfile.TemporaryDirectory() as temp:
-            project = self.project(temp)
-            self.run_cli("init", "--with-layers", "--body-root", "agent", "--json", cwd=project)
-
-            self.assertFalse((project / "agent" / "memory").exists())
+            self.assertEqual(resolved.returncode, 2)
+            self.assertIn("unknown layer: memory", resolved.stderr)
+            layers = json.loads(self.run_cli("path", cwd=project).stdout)["layers"]
+            self.assertEqual(sorted(layers), ["assets", "capabilities", "context", "routines"])
             report = self.doctor_json(project)
-            self.assertIn("memory", report["layers"])
-            self.assertFalse(report["layers"]["memory"]["present"])
+            self.assertNotIn("memory", report["layers"])
             self.assertEqual([p for p in report["problems"] if "memory" in p], [])
-            self.assertTrue(report["ok"], report["problems"])
 
     def test_generated_context_references_the_configured_body_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

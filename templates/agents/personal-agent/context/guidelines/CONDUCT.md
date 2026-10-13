@@ -21,7 +21,7 @@ Separate what you verified from what you infer, and say which is which. Name wha
 
 ## Where Facts Live
 
-Each fact has one home in this project: the supervisor in the dossier, every person in the People file, a project in its own file. A conclusion with no home yet goes to `contextkit memory add`.
+Each fact has one home in this project: the supervisor in the dossier, every person in the People file, a project in its own file.
 
 Load the People file before answering a message, writing to anyone, or reasoning about a person. Load the Projects index before judging priorities or preparing the daily brief.
 

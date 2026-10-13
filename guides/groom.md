@@ -8,9 +8,7 @@ This guide owns semantic grooming. It applies One Fact One Home, Altitude, Conte
 
 State the accepted scope before review. Include the managed project body and configured context-bearing sources. Inspect generated output only as evidence of delivery.
 
-Exclude active project memory. Use `contextkit guide memory` for memory grooming and promotion.
-
-Do not inspect arbitrary repository documentation or code, provider-private memory, secrets, connection payloads, or capability state as part of semantic grooming.
+Do not inspect arbitrary repository documentation or code, project or provider memory, secrets, connection payloads, or capability state as part of semantic grooming.
 
 Load the guide or tool surface that owns each artifact before judging it. If the complete accepted scope was not reviewed, do not report `PASS`.
 

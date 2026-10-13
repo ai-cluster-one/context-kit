@@ -18,7 +18,6 @@ GUIDE_TOPICS = [
     "agent-team",
     "workbench",
     "global-context",
-    "memory",
     "validation",
     "assets",
     "routines",
