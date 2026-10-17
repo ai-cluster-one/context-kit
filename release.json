@@ -1,14 +1,14 @@
 {
   "files": {
-    "bin/contextkit": "c8153f0130ac3bf0cc9aaa3c7c72b686d43eb404b011a4190201b66c4ece5df7",
+    "bin/contextkit": "752cff169c8663872b8adc10be7c2b5eb23790ee67207f9eb628bb79a507f2c7",
     "bundle/collaboration.md": "3520660875aebf39457e31072d41392943a74a2b849ef4ccf0db6ee74c317691",
     "bundle/runtime.md": "f33b3acb4f87b93814b266cfef00ccc3a3580666bba7e5de3677ee740d9fb15c",
     "guides/agent-team.md": "b5e5792b9c1effac9d1d57ac359099da40a704fe957bdcb09c286b39d0bf969c",
     "guides/assets.md": "2a185c1a4f1f5d43bea09bab973dd4acf6632e97f66f45b0138738e36a0e84c1",
     "guides/audit.md": "2193f6c4896332b18ad9a1d6538ce44a6c90b15af5f3cf7a5cebdf9f81d4b5b9",
-    "guides/authoring.md": "344f9e9d539d2ad7ccf40b97f19f8a0538c32b72013da4395cd632a071607be5",
+    "guides/authoring.md": "21a9be21c7a97acf1823206057156f305ba75ec94f2405f5c170056cf0df5f27",
     "guides/bootstrap.md": "596f2871a1447606413a756aa5028cf329138c51da3dd6f329addd04a425fd51",
-    "guides/capabilities.md": "84ab388e3c862613f44936b879a963299fa795b1a63e363545e9e9c05887ec04",
+    "guides/capabilities.md": "6317b2a86638f22ce68aae14647dbd422633c66bda5c5479e7cb9536d2e4c38e",
     "guides/destructive.md": "6923cc0eb4968331dcf86dee2eb1a2fbb32fd77f5f975ff4245b78c70111d187",
     "guides/global-context.md": "738f7eff210d1a77b24abec1d337a16449e9e2ba2be8ca5f4a21d0dd248fd268",
     "guides/groom.md": "3b68a0431e11381618fbd84181e2549e06534f78265a5d86cad875278d78a845",
@@ -42,5 +42,5 @@
     "templates/global-context/GLOBAL-CONTEXT.md": "0035766fd5412ec76ea9b71a033522111dd916729f7aefcb34704e659b2487fc"
   },
   "schema": 1,
-  "version": "0.3.13"
+  "version": "0.3.14"
 }
