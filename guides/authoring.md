@@ -13,7 +13,7 @@ Classify the material before writing:
 - provisional project knowledge that future sessions must account for before it has a durable owner: the project's memory tool, through its own help;
 - historical evidence, research, plans, raw notes, session records, or snapshots: `assets/`;
 - repeatable ordered work: `routines/`;
-- enabled tool envelopes, identifiers, connection declarations, and project-specific capability references: `capabilities/`;
+- capability envelopes - the project identity and the project-specific references a capability's doctrine places there: `capabilities/`; the capability records, such as the enabled set, identifiers and connections, belong to the capabilities manager;
 - ContextKit-native reports: `.contextkit/`;
 - generated host context: never edit by hand.
 

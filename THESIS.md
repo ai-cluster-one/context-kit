@@ -17,7 +17,7 @@ A ContextKit project separates the kinds of knowledge an agent needs:
 - `context/` holds live doctrine: identity, mission, laws, constraints, architecture, and stable project models.
 - `assets/` preserves evidence: sessions, plans, research, history, raw notes, and records of how the project learned something.
 - `routines/` holds repeatable work: procedures with triggers, order, idempotency, stop conditions, and expected outcomes.
-- `capabilities/` holds project envelopes for tools: the enabled set, project-specific identifiers, references, and connection declarations where the tool's own doctrine allows them.
+- `capabilities/` holds project envelopes for tools: the project's identity and the project-specific references a tool's own doctrine places there. The tools' records - the enabled set, identifiers, connections - belong to the capabilities manager, which answers for them.
 - `.contextkit/` holds binding and manager artifacts: config, audit reports, and ContextKit-native technical state.
 - Generated host context is delivery output. It is rebuilt from source and is not edited by hand.
 

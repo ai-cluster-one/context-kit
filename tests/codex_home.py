@@ -4,7 +4,9 @@
 user config; tests must never write to the developer's real one. Every build and
 identity write upserts the agents registry row when a store is configured, so
 tests clear the `AGENTKIT_DB_*` keys and the machine store setting; a test that
-needs a store names its own. Every `update --apply` installs the store driver, so
+needs a store names its own. The project id, the agent registry and the capability
+context are asked of the capabilities manager, so tests reach the fixture manager,
+which offers no agent verbs, unless a test names its own. Every `update --apply` installs the store driver, so
 tests reach a stand-in `uv` first on PATH and a pip that never leaves the machine.
 """
 from __future__ import annotations
@@ -24,6 +26,7 @@ os.environ["XDG_CONFIG_HOME"] = CONFIG_HOME
 atexit.register(shutil.rmtree, CONFIG_HOME, True)
 for key in [key for key in os.environ if key.startswith("AGENTKIT_DB_")]:
     del os.environ[key]
+os.environ["CAPABILITIES_MANAGER"] = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "capabilities")
 
 # A stand-in for uv: `pip install --target DIR` writes a psycopg stand-in there that
 # loads and then fails to connect, so a store result shows which driver loaded; every

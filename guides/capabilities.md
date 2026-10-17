@@ -15,7 +15,7 @@ ContextKit owns:
 - unchanged placement of the returned block in generated runtime context;
 - warnings that affect context generation.
 
-The capabilities manager owns the project gate, its manager intro, enabled capability enumeration, installed snapshots, and rendering of project identifiers, connections, and references. Individual capability tools own their command contracts, readiness, credentials, state homes, schemas, releases, and internal authoring doctrine.
+The capabilities manager owns the project gate, its manager intro, enabled capability enumeration, installed snapshots, and the records and rendering of project identifiers, connections, and references; ask the manager for them rather than reading the envelope. Individual capability tools own their command contracts, readiness, credentials, state homes, schemas, releases, and internal authoring doctrine.
 
 ## Operating A Capability
 
