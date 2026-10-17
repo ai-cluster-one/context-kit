@@ -1500,7 +1500,7 @@ def _parse_identity(raw: dict[str, Any]) -> dict[str, str | None]:
 def _parse_onboarding(raw: dict[str, Any]) -> dict[str, str] | None:
     """Read the optional `[onboarding]` table an agent created from a template carries."""
     section = raw.get("onboarding")
-    if section is None:
+    if section is None or section == {}:
         return None
     route = "Use `contextkit onboarding status` and `contextkit guide bootstrap` for the onboarding state."
     if not isinstance(section, dict):
@@ -2083,8 +2083,8 @@ def _compose_context(root: Path) -> tuple[str, list[str]]:
     legacy_memory = _legacy_memory_folder(root, body_root)
     if legacy_memory:
         warnings.append(_legacy_memory_warning(legacy_memory))
-    onboarding = cfg["onboarding"]
-    onboarding_block = _onboarding_block(root, cfg, warnings) if onboarding and onboarding["status"] == "pending" else ""
+    onboarding = _onboarding_state(root, cfg, warnings)
+    onboarding_block = _onboarding_block(root, cfg, onboarding, warnings) if onboarding and onboarding["status"] == "pending" else ""
 
     out: list[str] = ["# Project Context", "", _generated_block().strip(), ""]
     if warnings:
@@ -2414,7 +2414,10 @@ def _init_project(root: Path, with_layers: bool = False, with_template: bool = F
             "Edit `body.root` in the config and move the body layers yourself; ContextKit does not relocate an existing body.",
             6,
         )
-    if _assign_project_id(root)["changed"] and config_existed:
+    assigned = _assign_project_id(root)
+    if assigned.get("minted_by_manager"):
+        created.append(str(root / cfg["sources"]["capabilities"] / CAPABILITIES_PROJECT_FILE))
+    elif assigned["changed"] and config_existed:
         changed.append(CONFIG_REL.as_posix())
     sources = cfg["sources"]
     _write_if_missing(root / README_REL, _binding_readme(sources), created, skipped)
@@ -2467,7 +2470,7 @@ def _enable_template_capabilities(root: Path, names: list[str]) -> list[dict[str
     env = {
         CAPABILITIES_ENVELOPE_ENV: str(root / cfg["sources"]["capabilities"]),
         f"{CAPABILITIES_ENVELOPE_ENV}_ROOT": str(root),
-        "CAPABILITIES_PROJECT_ID": cfg["identity"]["id"] or "",
+        "CAPABILITIES_PROJECT_ID": _project_id(root, cfg) or "",
         "CAPABILITIES_PROJECT_ID_ROOT": str(root),
     }
     errors: dict[str, str] = {}
@@ -2515,6 +2518,45 @@ def _enable_template_capabilities(root: Path, names: list[str]) -> list[dict[str
     return results
 
 
+def _require_template_store(root: Path) -> None:
+    """Refuse a new agent before anything is written when its capabilities would have no database.
+
+    Only a capabilities manager that owns the agent registry keeps capability
+    records in a database alone; with any other manager the check passes.
+    """
+    if _kernel_manager(root) is None:
+        return
+    try:
+        answer = _kernel(root, "store", "show", "--project", str(root), "--json")
+    except KernelError as exc:
+        _die(f"`init --template` could not read the database setting: {exc.message}\nNothing was changed.", 6)
+    if not answer.get("configured"):
+        _die(
+            f"`init --template` creates an agent whose capabilities keep their records in a database, and no database "
+            f"resolves for {root}.\n"
+            "Nothing was changed. Set the database with `capabilities store set`, or in AgentKit's database settings, "
+            "then run `contextkit init --template` again.",
+            6,
+        )
+
+
+def _template_identity_in_registry(root: Path, name: str, template: dict[str, Any], icon: Path) -> bool:
+    """Write a new agent's identity and onboarding to the registry row; False where the config keeps them.
+
+    A registry that does not answer leaves them in the config, which the build moves into the row once it answers.
+    """
+    flags = ["--name", name, "--description", template["description"], "--icon", str(icon)]
+    if template["onboarding"]:
+        flags += ["--onboarding-status", "pending", "--onboarding-routine", template["onboarding"]["routine"]]
+    try:
+        if _kernel_agent(root) is None:
+            return False
+        _kernel(root, "agent", "set", *flags, "--json")
+    except KernelError:
+        return False
+    return True
+
+
 def _init_from_template(root: Path, template_id: str, body_root: str | None, trust: bool, name: str | None = None) -> dict[str, Any]:
     """Create a new agent in the empty folder `root` from one shipped agent template.
 
@@ -2542,6 +2584,7 @@ def _init_from_template(root: Path, template_id: str, body_root: str | None, tru
         )
     if body_root is not None:
         _parse_body_root({"body": {"root": body_root}})
+    _require_template_store(root)
 
     # The folder is empty, so this is bootstrap's git step: a repository with the body left ready to commit.
     git = _prepare_git_for_bootstrap(root, yes=True)
@@ -2559,9 +2602,10 @@ def _init_from_template(root: Path, template_id: str, body_root: str | None, tru
     init["created"].append(str(staged["path"]))
     if name is None:
         name = secrets.choice(template["agent_names"])
-    _write_identity_values(root, [("name", name), ("description", template["description"]), ("icon", staged["reference"])])
-    if template["onboarding"]:
-        _write_config_values(root, ONBOARDING_TABLE, [("status", "pending"), ("routine", template["onboarding"]["routine"])])
+    if not _template_identity_in_registry(root, name, template, staged["path"]):
+        _write_identity_values(root, [("name", name), ("description", template["description"]), ("icon", staged["reference"])])
+        if template["onboarding"]:
+            _write_config_values(root, ONBOARDING_TABLE, [("status", "pending"), ("routine", template["onboarding"]["routine"])])
 
     capabilities = _enable_template_capabilities(root, template["capabilities"])
     # A Claude or Codex session in the new agent's folder loads its context only through these bindings.
@@ -4170,12 +4214,35 @@ def _identity_icon_path(root: Path, identity: dict[str, str | None]) -> Path | N
 
 
 def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
-    """Resolve the agent identity a host application shows for this project."""
+    """Resolve the agent identity a host application shows for this project.
+
+    Where the capabilities manager owns the registry, its row answers first and
+    the config only for a value the row does not hold yet.
+    """
     identity = cfg["identity"]
-    configured_name = identity["name"]
+    problems: list[str] = []
+    project_id = _project_id(root, cfg)
+    try:
+        answer = _kernel_agent(root)
+    except KernelError as exc:
+        answer = None
+        problems.append(f"the agent registry did not answer, so this identity is the config's: {exc.message}")
+    row = _kernel_row(answer)
+    configured_name = row.get("name") or identity["name"]
+    description = row.get("description") or identity["description"]
+    if answer is not None and identity["id"] is not None and answer.get("agent_id") != identity["id"]:
+        problems.append(
+            f"{CONFIG_REL.as_posix()} holds project id {identity['id']}, but the capabilities manager answers "
+            f"{answer.get('agent_id')}; reconcile them with the capabilities manager"
+        )
     icon_path = _identity_icon_path(root, identity)
     icon: str | None = None
-    problems: list[str] = []
+    if row.get("icon_sha"):
+        icon_path = None
+        try:
+            icon = str(_kernel_icon(root, row["icon_sha"]))
+        except KernelError as exc:
+            problems.append(f"the agent registry's icon could not be read: {exc.message}")
     if icon_path is not None:
         if icon_path.is_file():
             icon = str(icon_path)
@@ -4185,15 +4252,15 @@ def _identity_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
                 "run `contextkit identity set --icon <file>` or `contextkit identity clear --icon`"
             )
     config = root / CONFIG_REL
-    if config.is_file() and identity["id"] is None:
+    if config.is_file() and project_id is None:
         problems.append("project id is not assigned; run `contextkit identity adopt`")
     return {
         "project": str(root),
         "config": str(config) if config.is_file() else None,
-        "id": identity["id"],
+        "id": project_id,
         "name": configured_name or root.name,
         "name_source": "config" if configured_name else "folder",
-        "description": identity["description"],
+        "description": description,
         "icon": icon,
         "problems": problems,
     }
@@ -4520,7 +4587,7 @@ def _agent_row(root: Path, identity: dict[str, str | None]) -> dict[str, Any]:
     }
 
 
-def _agent_store(root: Path, write: bool) -> dict[str, Any]:
+def _contextkit_agent_store(root: Path, write: bool) -> dict[str, Any]:
     """Upsert this agent's row in the agents registry, or with `write` false only read where it stands.
 
     The result is information: an absent, unavailable or failing store never fails the
@@ -4561,6 +4628,188 @@ def _agent_store(root: Path, write: bool) -> dict[str, Any]:
         return {**report, "state": state, "error": exc.slug, "detail": _one_line(exc.message)}
     except Exception as exc:  # A store failure is reported, never raised into the command.
         return {**report, "state": "error", "error": type(exc).__name__, "detail": _one_line(str(exc))}
+
+
+# A capabilities manager that offers `capabilities agent` owns this project's id
+# (in the envelope's project.json), its agent registry row (`capabilities_agents`)
+# and its onboarding. ContextKit then reads and writes them through that manager
+# and moves the values its config still holds into the row. A manager without the
+# verbs, or one answering that no database resolves or that the project has no id
+# yet, leaves them where ContextKit keeps them itself: the config and `contextkit_agents`.
+KERNEL_HELP_MARK = "agent show"
+KERNEL_FILE_CODES = ("store_not_configured", "no_project_identity")
+_KERNEL_OFFERED: dict[str, bool] = {}
+
+
+class KernelError(Exception):
+    """A capabilities manager that owns the agent registry did not answer; named by its error code."""
+
+    def __init__(self, code: str, message: str) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
+def _kernel_manager(root: Path) -> str | None:
+    """The capabilities manager when it offers the agent verbs, asked once per manager and process."""
+    manager = _capabilities_manager()
+    if not manager:
+        return None
+    if manager not in _KERNEL_OFFERED:
+        try:
+            proc = _run([manager, "help"], root, timeout=60)
+            _KERNEL_OFFERED[manager] = proc.returncode == 0 and KERNEL_HELP_MARK in proc.stdout
+        except (OSError, subprocess.TimeoutExpired):
+            _KERNEL_OFFERED[manager] = False
+    return manager if _KERNEL_OFFERED[manager] else None
+
+
+def _manager_error(proc: subprocess.CompletedProcess[str]) -> tuple[str, str]:
+    """The code and message of the error a capabilities manager command reported."""
+    for stream in (proc.stderr, proc.stdout):
+        for line in reversed((stream or "").splitlines()):
+            with contextlib.suppress(ValueError, KeyError, TypeError, AttributeError):
+                error = json.loads(line)["error"]
+                return str(error.get("code") or "manager_failed"), _one_line(str(error.get("message") or ""))
+    return "manager_failed", _one_line(proc.stderr or proc.stdout)[:300] or f"exited {proc.returncode}"
+
+
+def _kernel(root: Path, *args: str) -> dict[str, Any]:
+    """Run one capabilities manager verb for this project and answer its JSON, or raise KernelError."""
+    manager = _kernel_manager(root)
+    if manager is None:
+        raise KernelError("not_offered", "the capabilities manager does not offer `capabilities agent`")
+    env: dict[str, str] = {}
+    if (root / CONFIG_REL).is_file():
+        # Hand the resolved envelope over, as the context build does, so the
+        # manager answers without calling back into ContextKit.
+        env = {
+            CAPABILITIES_ENVELOPE_ENV: str(root / _config(root)["sources"]["capabilities"]),
+            f"{CAPABILITIES_ENVELOPE_ENV}_ROOT": str(root),
+        }
+    verb = " ".join(arg for arg in args[:2] if not arg.startswith("-"))
+    try:
+        proc = _run([manager, *args], root, env=env, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise KernelError("manager_failed", f"`capabilities {verb}` could not run: {_one_line(str(exc))}") from None
+    if proc.returncode != 0:
+        code, message = _manager_error(proc)
+        raise KernelError(code, f"`capabilities {verb}` exited {proc.returncode}: {message}")
+    try:
+        answer = json.loads(proc.stdout)
+    except ValueError:
+        answer = None
+    if not isinstance(answer, dict):
+        raise KernelError("manager_malformed", f"`capabilities {verb}` did not answer a JSON object")
+    return answer
+
+
+def _kernel_agent(root: Path) -> dict[str, Any] | None:
+    """This project's `capabilities agent show`, or None where ContextKit keeps identity and onboarding in its files."""
+    if _kernel_manager(root) is None:
+        return None
+    try:
+        return _kernel(root, "agent", "show", "--json")
+    except KernelError as exc:
+        if exc.code in KERNEL_FILE_CODES:
+            return None
+        raise
+
+
+def _kernel_row(answer: dict[str, Any] | None) -> dict[str, Any]:
+    row = (answer or {}).get("agent")
+    return row if isinstance(row, dict) else {}
+
+
+def _kernel_icon(root: Path, sha: str) -> Path:
+    """The registry's icon as a file in the binding folder, under the name its content gives it."""
+    path = root / CONFIG_REL.parent / f"icon-{sha[:12]}.png"
+    if not path.is_file():
+        _kernel(root, "agent", "show", "--icon-out", str(path), "--json")
+    return path
+
+
+def _drop_config_registry_values(root: Path) -> None:
+    """Remove the identity and onboarding values the registry row now holds from the config."""
+    if not (root / CONFIG_REL).is_file():
+        return
+    raw = _load_toml(root / CONFIG_REL)
+    for table, keys in ((IDENTITY_TABLE, IDENTITY_KEYS), (ONBOARDING_TABLE, ("status", "routine"))):
+        section = raw.get(table[0])
+        present = [key for key in keys if isinstance(section, dict) and key in section]
+        _write_config_values(root, table, [(key, None) for key in present])
+
+
+def _kernel_carry(root: Path, answer: dict[str, Any]) -> str:
+    """Register the agent and move the values the config holds and the row lacks into the row."""
+    cfg = _config(root)
+    identity, onboarding = cfg["identity"], cfg["onboarding"]
+    row = _kernel_row(answer)
+    flags: list[str] = []
+    for key in ("name", "description"):
+        if identity[key] and not row.get(key):
+            flags += [f"--{key}", identity[key]]
+    icon_path = _identity_icon_path(root, identity)
+    if icon_path is not None and icon_path.is_file() and not row.get("icon_sha"):
+        flags += ["--icon", str(icon_path)]
+    if onboarding and not row.get("onboarding_status"):
+        flags += ["--onboarding-status", onboarding["status"], "--onboarding-routine", onboarding["routine"]]
+    if not flags and not answer.get("registered"):
+        # Clearing a field the new row cannot hold registers the agent and writes nothing else.
+        flags = ["--onboarding-status", "none"]
+    if flags:
+        _kernel(root, "agent", "set", *flags, "--json")
+    _drop_config_registry_values(root)
+    if not answer.get("registered"):
+        return "created"
+    return "updated" if flags else "unchanged"
+
+
+def _agent_store(root: Path, write: bool) -> dict[str, Any]:
+    """Write this agent's registry row, or with `write` false only read where it stands, through its owner.
+
+    The result is information and never fails the command that asked.
+    """
+    if _kernel_manager(root) is None:
+        return _contextkit_agent_store(root, write)
+    report: dict[str, Any] = {"configured": True, "level": "capabilities", "source": "capabilities agent"}
+    try:
+        answer = _kernel(root, "agent", "show", "--json")
+    except KernelError as exc:
+        if exc.code == "store_not_configured":
+            detail = "no store is configured" + ("; the agents registry write is skipped" if write else "")
+            return {"configured": False, "state": "not_configured", "detail": detail, "level": "none"}
+        if exc.code == "no_project_identity":
+            return {**report, "state": "skipped", "detail": "the project id is not assigned; run `contextkit identity adopt`"}
+        return {**report, "state": "error", "error": exc.code, "detail": exc.message}
+    store = answer.get("store") if isinstance(answer.get("store"), dict) else {}
+    report["level"] = str(store.get("level") or report["level"])
+    row = f"capabilities agent row `{answer.get('agent_id')}`"
+    if not write:
+        if answer.get("registered"):
+            return {**report, "state": "row_present", "detail": f"{row} present"}
+        return {**report, "state": "row_absent", "detail": f"{row} absent; `contextkit build` writes it"}
+    try:
+        state = _kernel_carry(root, answer)
+    except KernelError as exc:
+        return {**report, "state": "error", "error": exc.code, "detail": exc.message}
+    except ContextKitError as exc:
+        return {**report, "state": "error", "error": "config_write_failed", "detail": _one_line(str(exc))}
+    return {**report, "state": state, "detail": f"{row} {state}"}
+
+
+def _kernel_store_report(answer: dict[str, Any], state: str) -> dict[str, Any]:
+    store = answer.get("store") if isinstance(answer.get("store"), dict) else {}
+    return {"configured": True, "level": str(store.get("level") or "capabilities"), "source": "capabilities agent",
+            "state": state, "detail": f"capabilities agent row `{answer.get('agent_id')}` {state}"}
+
+
+def _project_id(root: Path, cfg: dict[str, Any]) -> str | None:
+    """The project id: the config's where it holds one, else project.json's where the manager owns the id."""
+    configured = cfg["identity"]["id"]
+    if configured is not None or _kernel_manager(root) is None:
+        return configured
+    return _envelope_project_id(root, cfg)
 
 
 def _format_agent_store(store: dict[str, Any]) -> str:
@@ -4711,9 +4960,34 @@ def _envelope_project_id(root: Path, cfg: dict[str, Any]) -> str | None:
 
 
 def _assign_project_id(root: Path) -> dict[str, Any]:
-    """Give the project its id once: adopt the envelope's id when there is one, otherwise generate one."""
+    """Give the project its id once.
+
+    An id the config holds stays the project's. Where the capabilities manager
+    owns the id, it lives in the envelope's project.json and `capabilities init`
+    mints it there. Otherwise ContextKit adopts the envelope's id when there is
+    one, or generates one, into the config.
+    """
     cfg = _config(root)
     current = cfg["identity"]["id"]
+    if _kernel_manager(root) is not None:
+        declared = _envelope_project_id(root, cfg)
+        minted = declared is None
+        if minted:
+            # The manager carries an id the config holds into project.json, and mints one otherwise.
+            try:
+                _kernel(root, "init")
+            except KernelError as exc:
+                _die(
+                    f"the capabilities manager could not give this project an id: {exc.message}\n"
+                    "Run `capabilities init` in the project, then run this command again.",
+                    6,
+                )
+            declared = _envelope_project_id(root, cfg)
+            if declared is None:
+                _die("`capabilities init` wrote no project id; run `capabilities doctor` in the project.", 6)
+        if current is not None:
+            return {"id": current, "id_source": "config", "changed": False}
+        return {"id": declared, "id_source": "capabilities", "changed": minted, "minted_by_manager": minted}
     if current is not None:
         return {"id": current, "id_source": "config", "changed": False}
     adopted = _envelope_project_id(root, cfg)
@@ -4744,6 +5018,73 @@ def cmd_identity_show(args: argparse.Namespace) -> None:
     _emit_identity(root, args.json)
 
 
+def _registry_for_write(root: Path) -> dict[str, Any] | None:
+    """The registry row a write goes to, with the config's values already moved into it, or None
+    where ContextKit keeps the values in its config. `created` says the agent was registered here."""
+    try:
+        answer = _kernel_agent(root)
+        if answer is None:
+            return None
+        created = _kernel_carry(root, answer) == "created"
+        return {**_kernel(root, "agent", "show", "--json"), "created": created}
+    except KernelError as exc:
+        _die(f"the agent registry did not answer, so nothing was written: {exc.message}", 5)
+
+
+def _identity_set_in_registry(root: Path, as_json: bool, answer: dict[str, Any], desired: dict[str, str],
+                              staged: dict[str, Any] | None) -> None:
+    row = _kernel_row(answer)
+    flags: list[str] = []
+    changed: list[str] = []
+    for key in ("name", "description"):
+        if key in desired and row.get(key) != desired[key]:
+            flags += [f"--{key}", desired[key]]
+            changed.append(key)
+    if staged is not None:
+        sha = hashlib.sha256(staged["path"].read_bytes()).hexdigest()
+        if row.get("icon_sha") != sha:
+            flags += ["--icon", str(staged["path"])]
+            changed.append("icon")
+    try:
+        if flags:
+            _kernel(root, "agent", "set", *flags, "--json")
+    except KernelError as exc:
+        if staged is not None and staged["written"]:
+            staged["path"].unlink(missing_ok=True)
+        _die(f"the agent registry refused the identity, so nothing was written: {exc.message}", 5)
+    removed = _remove_owned_icons(root, staged["reference"]) if staged is not None else []
+    state = "created" if answer["created"] else "updated" if flags else "unchanged"
+    _emit_identity(root, as_json, {
+        "changed": [key for key in IDENTITY_KEYS if key in changed],
+        "unchanged": [key for key in IDENTITY_KEYS if key in desired and key not in changed],
+        "removed": removed,
+        "store": _kernel_store_report(answer, state),
+    })
+
+
+def _identity_clear_in_registry(root: Path, as_json: bool, answer: dict[str, Any], requested: list[str]) -> None:
+    row = _kernel_row(answer)
+    flags: list[str] = []
+    changed: list[str] = []
+    for key in requested:
+        if row.get("icon_sha" if key == "icon" else key):
+            flags += ["--no-icon"] if key == "icon" else [f"--{key}", ""]
+            changed.append(key)
+    try:
+        if flags:
+            _kernel(root, "agent", "set", *flags, "--json")
+    except KernelError as exc:
+        _die(f"the agent registry refused the change, so nothing was cleared: {exc.message}", 5)
+    removed = _remove_owned_icons(root, None) if "icon" in requested else []
+    state = "created" if answer["created"] else "updated" if flags else "unchanged"
+    _emit_identity(root, as_json, {
+        "changed": changed,
+        "unchanged": [key for key in requested if key not in changed],
+        "removed": removed,
+        "store": _kernel_store_report(answer, state),
+    })
+
+
 def cmd_identity_set(args: argparse.Namespace) -> None:
     root = _explicit_project_root(args)
     _identity_config_path(root)
@@ -4757,10 +5098,14 @@ def cmd_identity_set(args: argparse.Namespace) -> None:
         _reject_identity_control_characters(args.description, "--description")
     if not desired and args.icon is None:
         _die("nothing to set: pass --name, --description, or --icon", 2)
+    answer = _registry_for_write(root)
     staged: dict[str, Any] | None = None
     if args.icon is not None:
         staged = _stage_identity_icon(root, args.icon)
         desired["icon"] = staged["reference"]
+    if answer is not None:
+        _identity_set_in_registry(root, args.json, answer, desired, staged)
+        return
     updates = [(key, value) for key, value in desired.items() if current.get(key) != value]
     changed = [key for key, _value in updates]
     try:
@@ -4790,6 +5135,10 @@ def cmd_identity_clear(args: argparse.Namespace) -> None:
     requested = [key for key in IDENTITY_KEYS if getattr(args, key)]
     if not requested:
         _die("nothing to clear: pass --name, --description, or --icon", 2)
+    answer = _registry_for_write(root)
+    if answer is not None:
+        _identity_clear_in_registry(root, args.json, answer, requested)
+        return
     changed = [key for key in requested if current.get(key) is not None]
     _write_identity_values(root, [(key, None) for key in changed])
     # ContextKit removes only the icon files it owns inside the binding folder.
@@ -4806,10 +5155,27 @@ def cmd_identity_clear(args: argparse.Namespace) -> None:
     )
 
 
-def _onboarding_routine_path(root: Path, cfg: dict[str, Any]) -> Path | None:
+def _onboarding_of(answer: dict[str, Any] | None, cfg: dict[str, Any]) -> dict[str, Any] | None:
+    """The onboarding the registry row holds, else the one the config holds."""
+    row = _kernel_row(answer)
+    if row.get("onboarding_status"):
+        return {"status": row["onboarding_status"], "routine": row.get("onboarding_routine")}
+    return cfg["onboarding"]
+
+
+def _onboarding_state(root: Path, cfg: dict[str, Any], problems: list[str]) -> dict[str, Any] | None:
+    """The onboarding this agent tracks, {status, routine}, or None."""
+    try:
+        answer = _kernel_agent(root)
+    except KernelError as exc:
+        answer = None
+        problems.append(f"the agent registry did not answer, so the onboarding is the config's: {exc.message}")
+    return _onboarding_of(answer, cfg)
+
+
+def _onboarding_routine_path(root: Path, cfg: dict[str, Any], onboarding: dict[str, Any] | None) -> Path | None:
     """Return the project-relative path of the routine onboarding names, or None when it is absent."""
-    onboarding = cfg["onboarding"]
-    if onboarding is None:
+    if onboarding is None or not onboarding["routine"]:
         return None
     entries = _routine_entries(root, Path(cfg["sources"]["routines"]), []) or []
     return next((rel for name, _description, rel, _title in entries if name == onboarding["routine"]), None)
@@ -4817,8 +5183,8 @@ def _onboarding_routine_path(root: Path, cfg: dict[str, Any]) -> Path | None:
 
 def _onboarding_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     """Resolve the onboarding state: `none` when the project tracks no onboarding."""
-    onboarding = cfg["onboarding"]
-    path = _onboarding_routine_path(root, cfg)
+    onboarding = _onboarding_state(root, cfg, [])
+    path = _onboarding_routine_path(root, cfg, onboarding)
     return {
         "project": str(root),
         "status": onboarding["status"] if onboarding else "none",
@@ -4827,9 +5193,9 @@ def _onboarding_report(root: Path, cfg: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _onboarding_block(root: Path, cfg: dict[str, Any], warnings: list[str]) -> str:
-    routine = cfg["onboarding"]["routine"]
-    path = _onboarding_routine_path(root, cfg)
+def _onboarding_block(root: Path, cfg: dict[str, Any], onboarding: dict[str, Any], warnings: list[str]) -> str:
+    routine = onboarding["routine"]
+    path = _onboarding_routine_path(root, cfg, onboarding)
     if path is None:
         warnings.append(f"onboarding routine `{routine}` is not declared in `{cfg['sources']['routines']}/`")
         reference = f"`{routine}`"
@@ -4862,14 +5228,21 @@ def cmd_onboarding_complete(args: argparse.Namespace) -> None:
     root = _explicit_project_root(args)
     _identity_config_path(root)
     cfg = _config(root)
-    if cfg["onboarding"] is None:
+    answer = _registry_for_write(root)
+    onboarding = _onboarding_of(answer, cfg)
+    if onboarding is None:
         _die(
-            f"no onboarding is tracked in {CONFIG_REL.as_posix()} at {root}\n"
+            f"no onboarding is tracked for the agent at {root}\n"
             "Only an agent created with `contextkit init --template` carries an onboarding.",
             3,
         )
-    changed = cfg["onboarding"]["status"] != "complete"
-    if changed:
+    changed = onboarding["status"] != "complete"
+    if changed and answer is not None:
+        try:
+            _kernel(root, "agent", "set", "--onboarding-status", "complete", "--json")
+        except KernelError as exc:
+            _die(f"the agent registry refused the change, so onboarding stays pending: {exc.message}", 5)
+    elif changed:
         _write_config_values(root, ONBOARDING_TABLE, [("status", "complete")])
     build = _build_context(root)
     report = {**_onboarding_report(root, _config(root)), "changed": changed, "generated_context": build["output"],
@@ -5485,13 +5858,13 @@ def _bootstrap_steps(root: Path, sources: dict[str, str]) -> list[MigrationStep]
             steps.append(MigrationStep(label, "create", "ready", "Missing required bootstrap file.", "contextkit adopt"))
 
     capabilities_dir = _capabilities_dir_from_sources(sources)
-    settings_rel = capabilities_dir / "settings.json"
-    if not (root / settings_rel).exists():
+    identity_rel = capabilities_dir / CAPABILITIES_PROJECT_FILE
+    if not (root / identity_rel).exists():
         steps.append(MigrationStep(
-            settings_rel.as_posix(),
+            identity_rel.as_posix(),
             "delegate",
             "manual",
-            "The capability gate belongs to the capabilities manager, which resolves this envelope from ContextKit.",
+            "The capability envelope belongs to the capabilities manager, which resolves it from ContextKit.",
             "capabilities init",
         ))
 

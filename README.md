@@ -96,7 +96,7 @@ assets/
   research/
 routines/
 capabilities/
-  settings.json
+  project.json
 
 # Optional external source configured per project:
 ~/contextkit-global/
